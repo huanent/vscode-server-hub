@@ -6,7 +6,15 @@
   "engines": {
     "vscode": "^1.125.0"
   },
+  "license": "MIT",
+  "publisher": "huanent",
+  "icon": "resources/logo.png",
   "main": "./out/extension.js",
+  "homepage": "https://github.com/huanent/vscode-server-hub",
+  "repository": {
+    "type": "github",
+    "url": "https://github.com/huanent/vscode-server-hub"
+  },
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -21,19 +29,31 @@
       "server-hub": [
         {
           "id": "server-hub.servers",
-          "name": "Servers"
+          "name": "Server List",
+          "icon": "resources/server.svg"
         }
       ]
     },
     "commands": [
       {
         "command": "server-hub.addServer",
-        "title": "Add SSH Server",
+        "title": "Add",
         "icon": "$(add)"
       },
       {
         "command": "server-hub.connectServer",
-        "title": "Connect to SSH Server"
+        "title": "Connect",
+        "icon": "$(remote)"
+      },
+      {
+        "command": "server-hub.editServer",
+        "title": "Edit",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "server-hub.deleteServer",
+        "title": "Delete",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -43,6 +63,23 @@
           "when": "view == server-hub.servers",
           "group": "navigation"
         }
+      ],
+      "view/item/context": [
+        {
+          "command": "server-hub.connectServer",
+          "when": "view == server-hub.servers && viewItem == sshServer",
+          "group": "inline"
+        },
+        {
+          "command": "server-hub.editServer",
+          "when": "view == server-hub.servers && viewItem == sshServer",
+          "group": "1_modification"
+        },
+        {
+          "command": "server-hub.deleteServer",
+          "when": "view == server-hub.servers && viewItem == sshServer",
+          "group": "2_delete"
+        }
       ]
     }
   },
@@ -50,9 +87,9 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
-    "test": "vscode-test"
+    "pretest": "npm run compile",
+    "test": "vscode-test",
+    "publish": "vsce publish"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -61,9 +98,7 @@
     "@types/vscode": "^1.125.0",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.0.0",
-    "eslint": "^10.5.0",
-    "typescript": "^6.0.3",
-    "typescript-eslint": "^8.61.1"
+    "typescript": "^7.0.2"
   },
   "overrides": {
     "diff": "^8.0.4",

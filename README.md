@@ -6,7 +6,8 @@ Server Hub keeps server connections close to your VS Code workspace. The first s
 
 - Dedicated Server Hub view in the Activity Bar.
 - Add SSH servers from a form in the editor area.
-- Open interactive SSH sessions in an editor terminal by selecting a server.
+- Open interactive SSH sessions from the connect button beside each server.
+- Edit or delete saved servers from the tree context menu.
 - Sync server names, hosts, ports, and usernames through VS Code Settings Sync.
 - Store passwords in VS Code Secret Storage instead of plain-text extension state.
 
@@ -15,7 +16,8 @@ Server Hub keeps server connections close to your VS Code workspace. The first s
 1. Open Server Hub from the Activity Bar.
 2. Select **Add SSH Server** from the Servers view title.
 3. Enter the connection details and save the server.
-4. Select the server in the tree to connect.
+4. Select the terminal button beside the server to connect.
+5. Right-click a server to edit or delete it.
 
 ## Synchronization
 
@@ -29,5 +31,4 @@ Connection metadata is stored in extension global state and registered for Setti
 ## Current Limitations
 
 - SSH password authentication is currently supported. SSH keys and agent forwarding are not yet available.
-- Saved connections cannot yet be edited or removed from the tree.
 - Database and VNC connections are planned but not implemented.

@@ -11,7 +11,7 @@ interface SshServer {
 	username: string;
 }
 
-interface AddServerMessage {
+interface ServerFormMessage {
 	type: 'save';
 	name?: unknown;
 	host?: unknown;
@@ -25,13 +25,8 @@ class ServerTreeItem extends vscode.TreeItem {
 		super(server.name, vscode.TreeItemCollapsibleState.None);
 		this.description = `${server.username}@${server.host}:${server.port}`;
 		this.tooltip = `${server.name}\n${this.description}`;
-		this.iconPath = new vscode.ThemeIcon('remote');
+		this.iconPath = new vscode.ThemeIcon('terminal');
 		this.contextValue = 'sshServer';
-		this.command = {
-			command: 'server-hub.connectServer',
-			title: 'Connect to SSH Server',
-			arguments: [server],
-		};
 	}
 }
 
@@ -141,41 +136,73 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(
 		vscode.window.registerTreeDataProvider('server-hub.servers', treeDataProvider),
-		vscode.commands.registerCommand('server-hub.addServer', () => openAddServerPanel(context, treeDataProvider)),
-		vscode.commands.registerCommand('server-hub.connectServer', (server: SshServer) => connectServer(context, server)),
+		vscode.commands.registerCommand('server-hub.addServer', () => openServerPanel(context, treeDataProvider)),
+		vscode.commands.registerCommand('server-hub.connectServer', (item: ServerTreeItem) => connectServer(context, item.server)),
+		vscode.commands.registerCommand('server-hub.editServer', (item: ServerTreeItem) => openServerPanel(context, treeDataProvider, item.server)),
+		vscode.commands.registerCommand('server-hub.deleteServer', (item: ServerTreeItem) => deleteServer(context, treeDataProvider, item.server)),
 	);
 }
 
 export function deactivate() {}
 
-function openAddServerPanel(context: vscode.ExtensionContext, treeDataProvider: ServerTreeDataProvider): void {
+function openServerPanel(
+	context: vscode.ExtensionContext,
+	treeDataProvider: ServerTreeDataProvider,
+	existingServer?: SshServer,
+): void {
+	const isEditing = existingServer !== undefined;
 	const panel = vscode.window.createWebviewPanel(
-		'server-hub.addServer',
-		'Add SSH Server',
+		'server-hub.serverForm',
+		isEditing ? 'Edit Server' : 'Add Server',
 		vscode.ViewColumn.Active,
 		{ enableScripts: true },
 	);
 
-	panel.webview.html = getAddServerHtml(panel.webview);
-	panel.webview.onDidReceiveMessage(async (message: AddServerMessage) => {
+	panel.webview.html = getServerFormHtml(panel.webview, existingServer);
+	panel.webview.onDidReceiveMessage(async (message: ServerFormMessage) => {
 		if (message.type !== 'save') {
 			return;
 		}
 
-		const server = parseServer(message);
+		const server = parseServer(message, existingServer?.id);
 		const password = stringValue(message.password);
-		if (!server || !password) {
+		if (!server || (!isEditing && !password)) {
 			void panel.webview.postMessage({ type: 'error', message: 'Please complete all required fields.' });
 			return;
 		}
 
 		const servers = context.globalState.get<SshServer[]>(serversStateKey, []);
-		await context.globalState.update(serversStateKey, [...servers, server]);
-		await context.secrets.store(passwordKey(server.id), password);
+		const updatedServers = isEditing
+			? servers.map(current => current.id === server.id ? server : current)
+			: [...servers, server];
+		await context.globalState.update(serversStateKey, updatedServers);
+		if (password) {
+			await context.secrets.store(passwordKey(server.id), password);
+		}
 		treeDataProvider.refresh();
 		panel.dispose();
-		void vscode.window.showInformationMessage(`Saved SSH server “${server.name}”.`);
+		void vscode.window.showInformationMessage(`${isEditing ? 'Updated' : 'Saved'} SSH server “${server.name}”.`);
 	}, undefined, context.subscriptions);
+}
+
+async function deleteServer(
+	context: vscode.ExtensionContext,
+	treeDataProvider: ServerTreeDataProvider,
+	server: SshServer,
+): Promise<void> {
+	const confirmation = await vscode.window.showWarningMessage(
+		`Delete server “${server.name}”?`,
+		{ modal: true },
+		'Delete',
+	);
+	if (confirmation !== 'Delete') {
+		return;
+	}
+
+	const servers = context.globalState.get<SshServer[]>(serversStateKey, []);
+	await context.globalState.update(serversStateKey, servers.filter(current => current.id !== server.id));
+	await context.secrets.delete(passwordKey(server.id));
+	treeDataProvider.refresh();
 }
 
 async function connectServer(context: vscode.ExtensionContext, server: SshServer): Promise<void> {
@@ -194,7 +221,7 @@ async function connectServer(context: vscode.ExtensionContext, server: SshServer
 	terminal.show();
 }
 
-function parseServer(message: AddServerMessage): SshServer | undefined {
+function parseServer(message: ServerFormMessage, serverId?: string): SshServer | undefined {
 	const name = stringValue(message.name);
 	const host = stringValue(message.host);
 	const username = stringValue(message.username);
@@ -204,7 +231,7 @@ function parseServer(message: AddServerMessage): SshServer | undefined {
 	}
 
 	return {
-		id: crypto.randomUUID(),
+		id: serverId ?? crypto.randomUUID(),
 		name,
 		host,
 		port,
@@ -220,15 +247,17 @@ function passwordKey(serverId: string): string {
 	return `server-hub.password.${serverId}`;
 }
 
-function getAddServerHtml(webview: vscode.Webview): string {
+function getServerFormHtml(webview: vscode.Webview, server?: SshServer): string {
 	const nonce = crypto.randomUUID().replaceAll('-', '');
+	const isEditing = server !== undefined;
+	const title = isEditing ? 'Edit Server' : 'Add Server';
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
-	<title>Add SSH Server</title>
+	<title>${title}</title>
 	<style>
 		body { max-width: 680px; margin: 0 auto; padding: 36px 28px; color: var(--vscode-foreground); font-family: var(--vscode-font-family); }
 		h1 { margin: 0 0 8px; font-size: 24px; font-weight: 600; }
@@ -245,18 +274,18 @@ function getAddServerHtml(webview: vscode.Webview): string {
 	</style>
 </head>
 <body>
-	<h1>Add SSH Server</h1>
+	<h1>${title}</h1>
 	<p>Connection details are synced. The password remains encrypted on this device.</p>
 	<form id="server-form">
-		<label>Name<input name="name" autocomplete="off" required autofocus placeholder="Production"></label>
+		<label>Name<input name="name" autocomplete="off" required autofocus placeholder="Production" value="${escapeHtml(server?.name ?? '')}"></label>
 		<div class="connection">
-			<label>Host<input name="host" autocomplete="off" required placeholder="server.example.com"></label>
-			<label>Port<input name="port" type="number" min="1" max="65535" value="22" required></label>
+			<label>Host<input name="host" autocomplete="off" required placeholder="server.example.com" value="${escapeHtml(server?.host ?? '')}"></label>
+			<label>Port<input name="port" type="number" min="1" max="65535" value="${server?.port ?? 22}" required></label>
 		</div>
-		<label>Username<input name="username" autocomplete="username" required placeholder="root"></label>
-		<label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+		<label>Username<input name="username" autocomplete="username" required placeholder="root" value="${escapeHtml(server?.username ?? '')}"></label>
+		<label>Password<input name="password" type="password" autocomplete="current-password" ${isEditing ? 'placeholder="Leave blank to keep the current password"' : 'required'}></label>
 		<div id="error" role="alert"></div>
-		<button type="submit">Save Server</button>
+		<button type="submit">${isEditing ? 'Update Server' : 'Save Server'}</button>
 	</form>
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
@@ -273,4 +302,12 @@ function getAddServerHtml(webview: vscode.Webview): string {
 	</script>
 </body>
 </html>`;
+}
+
+function escapeHtml(value: string): string {
+	return value
+		.replaceAll('&', '&amp;')
+		.replaceAll('"', '&quot;')
+		.replaceAll('<', '&lt;')
+		.replaceAll('>', '&gt;');
 }
