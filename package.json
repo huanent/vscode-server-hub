@@ -1,0 +1,75 @@
+{
+  "name": "server-hub",
+  "displayName": "Server Hub",
+  "description": "Manage and connect to servers from VS Code.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.125.0"
+  },
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "server-hub",
+          "title": "Server Hub",
+          "icon": "resources/server.svg"
+        }
+      ]
+    },
+    "views": {
+      "server-hub": [
+        {
+          "id": "server-hub.servers",
+          "name": "Servers"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "server-hub.addServer",
+        "title": "Add SSH Server",
+        "icon": "$(add)"
+      },
+      {
+        "command": "server-hub.connectServer",
+        "title": "Connect to SSH Server"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "server-hub.addServer",
+          "when": "view == server-hub.servers",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "24.x",
+    "@types/ssh2": "^1.15.5",
+    "@types/vscode": "^1.125.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.0.0",
+    "eslint": "^10.5.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.1"
+  },
+  "overrides": {
+    "diff": "^8.0.4",
+    "serialize-javascript": "^7.0.6"
+  },
+  "dependencies": {
+    "ssh2": "^1.17.0"
+  }
+}
