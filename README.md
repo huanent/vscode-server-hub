@@ -8,6 +8,7 @@ Server Hub keeps server connections close to your VS Code workspace. The first s
 - Add SSH servers from a form in the editor area.
 - Open interactive SSH sessions from the connect button beside each server.
 - Edit or delete saved servers from the tree context menu.
+- Import and export server connections as JSON, including passwords.
 - Sync server names, hosts, ports, and usernames through VS Code Settings Sync.
 - Store passwords in VS Code Secret Storage instead of plain-text extension state.
 
@@ -18,6 +19,8 @@ Server Hub keeps server connections close to your VS Code workspace. The first s
 3. Enter the connection details and save the server.
 4. Select the terminal button beside the server to connect.
 5. Right-click a server to edit or delete it.
+
+Use the import and export buttons in the Server List title to move connections between devices. Export files contain passwords in plain text, so keep them secure and delete them when they are no longer needed.
 
 ## Synchronization
 

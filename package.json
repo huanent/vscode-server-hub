@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "Server Hub",
   "description": "Manage and connect to servers from VS Code.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -10,6 +10,9 @@
   "publisher": "huanent",
   "icon": "resources/logo.png",
   "main": "./out/extension.js",
+  "extensionKind": [
+    "ui"
+  ],
   "homepage": "https://github.com/huanent/vscode-server-hub",
   "repository": {
     "type": "github",
@@ -41,9 +44,19 @@
         "icon": "$(add)"
       },
       {
+        "command": "server-hub.importServers",
+        "title": "Import",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "server-hub.exportServers",
+        "title": "Export",
+        "icon": "$(cloud-upload)"
+      },
+      {
         "command": "server-hub.connectServer",
         "title": "Connect",
-        "icon": "$(remote)"
+        "icon": "$(vm-connect)"
       },
       {
         "command": "server-hub.editServer",
@@ -59,9 +72,19 @@
     "menus": {
       "view/title": [
         {
+          "command": "server-hub.importServers",
+          "when": "view == server-hub.servers",
+          "group": "navigation@2"
+        },
+        {
+          "command": "server-hub.exportServers",
+          "when": "view == server-hub.servers",
+          "group": "navigation@3"
+        },
+        {
           "command": "server-hub.addServer",
           "when": "view == server-hub.servers",
-          "group": "navigation"
+          "group": "navigation@4"
         }
       ],
       "view/item/context": [

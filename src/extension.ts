@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { homedir } from 'node:os';
 import { Client, ClientChannel } from 'ssh2';
 
 const serversStateKey = 'server-hub.servers';
@@ -9,6 +10,15 @@ interface SshServer {
 	host: string;
 	port: number;
 	username: string;
+}
+
+interface ExportedSshServer extends SshServer {
+	password: string;
+}
+
+interface ServerExportFile {
+	version: 1;
+	servers: ExportedSshServer[];
 }
 
 interface ServerFormMessage {
@@ -137,6 +147,8 @@ export function activate(context: vscode.ExtensionContext) {
 	context.subscriptions.push(
 		vscode.window.registerTreeDataProvider('server-hub.servers', treeDataProvider),
 		vscode.commands.registerCommand('server-hub.addServer', () => openServerPanel(context, treeDataProvider)),
+		vscode.commands.registerCommand('server-hub.importServers', () => importServers(context, treeDataProvider)),
+		vscode.commands.registerCommand('server-hub.exportServers', () => exportServers(context)),
 		vscode.commands.registerCommand('server-hub.connectServer', (item: ServerTreeItem) => connectServer(context, item.server)),
 		vscode.commands.registerCommand('server-hub.editServer', (item: ServerTreeItem) => openServerPanel(context, treeDataProvider, item.server)),
 		vscode.commands.registerCommand('server-hub.deleteServer', (item: ServerTreeItem) => deleteServer(context, treeDataProvider, item.server)),
@@ -144,6 +156,127 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {}
+
+async function exportServers(context: vscode.ExtensionContext): Promise<void> {
+	const servers = context.globalState.get<SshServer[]>(serversStateKey, []);
+	if (servers.length === 0) {
+		void vscode.window.showInformationMessage('There are no SSH servers to export.');
+		return;
+	}
+
+	const confirmation = await vscode.window.showWarningMessage(
+		'The exported JSON file will contain passwords in plain text.',
+		{ modal: true },
+		'Export',
+	);
+	if (confirmation !== 'Export') {
+		return;
+	}
+
+	const exportedServers = await Promise.all(servers.map(async server => ({
+		...server,
+		password: await context.secrets.get(passwordKey(server.id)) ?? '',
+	})));
+	const target = await vscode.window.showSaveDialog({
+		filters: { JSON: ['json'] },
+		defaultUri: vscode.Uri.joinPath(vscode.Uri.file(homedir()), 'server-hub-export.json'),
+		saveLabel: 'Export',
+	});
+	if (!target) {
+		return;
+	}
+
+	const data: ServerExportFile = { version: 1, servers: exportedServers };
+	try {
+		await vscode.workspace.fs.writeFile(target, Buffer.from(`${JSON.stringify(data, undefined, 2)}\n`, 'utf8'));
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		void vscode.window.showErrorMessage(`Could not export SSH servers: ${message}`);
+		return;
+	}
+	void vscode.window.showInformationMessage(`Exported ${servers.length} SSH server${servers.length === 1 ? '' : 's'}.`);
+}
+
+async function importServers(
+	context: vscode.ExtensionContext,
+	treeDataProvider: ServerTreeDataProvider,
+): Promise<void> {
+	const selection = await vscode.window.showOpenDialog({
+		canSelectMany: false,
+		filters: { JSON: ['json'] },
+		openLabel: 'Import',
+	});
+	if (!selection?.[0]) {
+		return;
+	}
+
+	let importedServers: ExportedSshServer[];
+	try {
+		const contents = await vscode.workspace.fs.readFile(selection[0]);
+		importedServers = parseServerExportFile(JSON.parse(Buffer.from(contents).toString('utf8')));
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		void vscode.window.showErrorMessage(`Could not import SSH servers: ${message}`);
+		return;
+	}
+
+	const confirmation = await vscode.window.showWarningMessage(
+		`Import ${importedServers.length} SSH server${importedServers.length === 1 ? '' : 's'} and store the included passwords? Existing servers with the same ID will be updated.`,
+		{ modal: true },
+		'Import',
+	);
+	if (confirmation !== 'Import') {
+		return;
+	}
+
+	const servers = context.globalState.get<SshServer[]>(serversStateKey, []);
+	const importedIds = new Set(importedServers.map(server => server.id));
+	const updatedServers = [
+		...servers.filter(server => !importedIds.has(server.id)),
+		...importedServers.map(({ password: _password, ...server }) => server),
+	];
+	await context.globalState.update(serversStateKey, updatedServers);
+	await Promise.all(importedServers.map(server => server.password
+		? context.secrets.store(passwordKey(server.id), server.password)
+		: context.secrets.delete(passwordKey(server.id))));
+	treeDataProvider.refresh();
+	void vscode.window.showInformationMessage(`Imported ${importedServers.length} SSH server${importedServers.length === 1 ? '' : 's'}.`);
+}
+
+function parseServerExportFile(value: unknown): ExportedSshServer[] {
+	if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.servers)) {
+		throw new Error('The file is not a supported Server Hub export.');
+	}
+
+	const serverIds = new Set<string>();
+	return value.servers.map((entry, index) => {
+		if (!isRecord(entry)) {
+			throw new Error(`Server ${index + 1} is invalid.`);
+		}
+
+		const id = stringValue(entry.id);
+		const server = parseServer({
+			type: 'save',
+			name: entry.name,
+			host: entry.host,
+			port: entry.port,
+			username: entry.username,
+		}, id);
+		if (!id || !server || typeof entry.password !== 'string') {
+			throw new Error(`Server ${index + 1} has invalid or missing fields.`);
+		}
+		if (serverIds.has(id)) {
+			throw new Error(`Server ${index + 1} uses a duplicate ID.`);
+		}
+
+		serverIds.add(id);
+		return { ...server, password: entry.password };
+	});
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 function openServerPanel(
 	context: vscode.ExtensionContext,
