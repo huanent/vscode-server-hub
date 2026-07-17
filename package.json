@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "Server Hub",
   "description": "Manage and connect to servers from VS Code.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -45,27 +45,27 @@
       },
       {
         "command": "server-hub.importServers",
-        "title": "Import",
+        "title": "Import Servers",
         "icon": "$(cloud-download)"
       },
       {
         "command": "server-hub.exportServers",
-        "title": "Export",
+        "title": "Export Servers",
         "icon": "$(cloud-upload)"
       },
       {
         "command": "server-hub.connectServer",
-        "title": "Connect",
-        "icon": "$(vm-connect)"
+        "title": "Connect Server",
+        "icon": "$(run-compact)"
       },
       {
         "command": "server-hub.editServer",
-        "title": "Edit",
+        "title": "Edit Server",
         "icon": "$(edit)"
       },
       {
         "command": "server-hub.deleteServer",
-        "title": "Delete",
+        "title": "Delete Server",
         "icon": "$(trash)"
       }
     ],
