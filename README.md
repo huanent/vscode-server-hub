@@ -24,13 +24,3 @@ Server Hub keeps SSH and MySQL connections close to your VS Code workspace.
 7. Right-click a server to edit or delete it.
 
 Use the import and export buttons in the Server List title to move connections between devices. Export files contain passwords in plain text, so keep them secure and delete them when they are no longer needed.
-
-## Requirements
-
-- A reachable SSH or MySQL server that accepts password authentication.
-
-## Current Limitations
-
-- SSH password authentication is currently supported. SSH keys and agent forwarding are not yet available.
-- MySQL table previews are read-only and limited to 100 rows.
-- MySQL table row counts come from server metadata and may be estimates for some storage engines.

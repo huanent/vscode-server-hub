@@ -1,15 +1,15 @@
 import * as vscode from 'vscode';
-import { configureMysqlEditor, configureMysqlTablePreview } from './mysql/mysqlEditor';
-import { MysqlServer, Server, ServerType } from './servers/server';
-import { configureServerForm } from './servers/serverForm';
-import { ServerStore } from './servers/serverStore';
-import { configureSshTerminal } from './ssh/sshTerminal';
+import { configureMysqlEditor, configureMysqlTablePreview } from '../mysql/mysqlEditor';
+import { MysqlServer, Server, ServerType } from '../servers/server';
+import { configureServerForm } from '../servers/serverForm';
+import { ServerStore } from '../servers/serverStore';
+import { configureSshTerminal } from '../ssh/sshTerminal';
 import {
 	createEditorUri,
 	EditorDescriptor,
 	parseEditorDescriptor,
 	serverHubEditorViewType,
-} from './editors/editorDescriptor';
+} from './editorDescriptor';
 
 class ServerHubDocument implements vscode.CustomDocument {
 	constructor(readonly uri: vscode.Uri, readonly descriptor: EditorDescriptor) {}

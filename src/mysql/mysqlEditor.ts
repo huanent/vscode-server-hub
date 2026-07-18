@@ -1,52 +1,23 @@
 import * as vscode from 'vscode';
-import { Connection, createConnection, FieldPacket, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
-import { MysqlServer } from './server';
-
-interface MysqlEditorMessage {
-	type: 'selectDatabase' | 'refresh' | 'openTable';
-	database?: unknown;
-	table?: unknown;
-}
-
-interface MysqlTablePreviewMessage {
-	type: 'loadPage' | 'updateRow';
-	page?: unknown;
-	pageSize?: unknown;
-	sort?: unknown;
-	filters?: unknown;
-	rowId?: unknown;
-	values?: unknown;
-}
-
-interface MysqlTableSort {
-	column: string;
-	direction: 'asc' | 'desc';
-}
-
-interface MysqlTableFilter {
-	column: string;
-	value: string;
-}
-
-interface MysqlColumnInfo {
-	name: string;
-	dataType: string;
-	nullable: boolean;
-	primaryKey: boolean;
-	editable: boolean;
-}
-
-const tablePageSizes = new Set([50, 100, 300, 500, 1000]);
-
-interface MysqlTableInfo {
-	name: string;
-	engine: string;
-	rowCount: number;
-	dataSize: number;
-	indexSize: number;
-	updatedAt: string | null;
-	collation: string;
-}
+import { Connection, FieldPacket, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
+import {
+	MysqlColumnInfo,
+	MysqlEditorMessage,
+	MysqlTableFilter,
+	MysqlTablePreviewMessage,
+	MysqlTableSort,
+} from './types';
+import { createMysqlConnection } from './mysqlConnection';
+import {
+	displayMysqlValue,
+	mysqlTablePageSizes,
+	normalizeTableInfo,
+	parseRowChanges,
+	parseTableFilters,
+	parseTableSort,
+} from './tableData';
+import { MysqlServer } from '../servers/server';
+import { codiconsDistUri, createNonce, escapeHtml } from '../webview/webviewUtils';
 
 export function configureMysqlEditor(
 	extensionUri: vscode.Uri,
@@ -199,7 +170,7 @@ export function configureMysqlTablePreview(
 			|| !Number.isInteger(message.page)
 			|| message.page < 1
 			|| typeof message.pageSize !== 'number'
-			|| !tablePageSizes.has(message.pageSize)
+			|| !mysqlTablePageSizes.has(message.pageSize)
 		) {
 			return;
 		}
@@ -272,8 +243,8 @@ export function configureMysqlTablePreview(
 				pageRows.set(rowId, row);
 				return {
 					rowId,
-					values: columns.map(column => displayValue(row[column])),
-					editValues: columns.map(column => editValue(row[column])),
+					values: columns.map(column => displayMysqlValue(row[column])),
+					editValues: columns.map(column => displayMysqlValue(row[column])),
 				};
 			});
 			void panel.webview.postMessage({
@@ -328,113 +299,8 @@ export function configureMysqlTablePreview(
 	}
 }
 
-function parseRowChanges(
-	value: unknown,
-	editableColumnNames: Set<string>,
-	columnInfo: MysqlColumnInfo[],
-): Array<{ column: string; value: unknown }> {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) {
-		return [];
-	}
-	const values = value as Record<string, unknown>;
-	const metadata = new Map(columnInfo.map(column => [column.name, column]));
-	return Object.entries(values).flatMap(([column, fieldValue]) => {
-		if (!editableColumnNames.has(column) || (fieldValue !== null && typeof fieldValue !== 'string')) {
-			return [];
-		}
-		const info = metadata.get(column);
-		if (!info || (fieldValue === null && !info.nullable)) {
-			return [];
-		}
-		return [{ column, value: parseEditValue(fieldValue, info.dataType) }];
-	});
-}
-
-function parseEditValue(value: string | null, dataType: string): unknown {
-	if (value === null) {
-		return null;
-	}
-	if (['binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob', 'bit'].includes(dataType) && /^0x[\da-f]*$/i.test(value)) {
-		return Buffer.from(value.slice(2), 'hex');
-	}
-	return value;
-}
-
-function parseTableSort(value: unknown, columnNames: Set<string>): MysqlTableSort | undefined {
-	if (!value || typeof value !== 'object') {
-		return undefined;
-	}
-	const sort = value as Record<string, unknown>;
-	return typeof sort.column === 'string'
-		&& columnNames.has(sort.column)
-		&& (sort.direction === 'asc' || sort.direction === 'desc')
-		? { column: sort.column, direction: sort.direction }
-		: undefined;
-}
-
-function parseTableFilters(value: unknown, columnNames: Set<string>): MysqlTableFilter[] {
-	if (!Array.isArray(value)) {
-		return [];
-	}
-	return value.flatMap(item => {
-		if (!item || typeof item !== 'object') {
-			return [];
-		}
-		const filter = item as Record<string, unknown>;
-		return typeof filter.column === 'string'
-			&& columnNames.has(filter.column)
-			&& typeof filter.value === 'string'
-			&& filter.value.length > 0
-			? [{ column: filter.column, value: filter.value }]
-			: [];
-	});
-}
-
-function createMysqlConnection(server: MysqlServer, password: string, database?: string): Promise<Connection> {
-	return createConnection({
-		host: server.host,
-		port: server.port,
-		user: server.username,
-		password,
-		database,
-		connectTimeout: 15_000,
-		dateStrings: true,
-		supportBigNumbers: true,
-		bigNumberStrings: true,
-	});
-}
-
-function normalizeTableInfo(row: RowDataPacket): MysqlTableInfo {
-	return {
-		name: String(row.name),
-		engine: row.engine ? String(row.engine) : '',
-		rowCount: Number(row.rowCount) || 0,
-		dataSize: Number(row.dataSize) || 0,
-		indexSize: Number(row.indexSize) || 0,
-		updatedAt: row.updatedAt ? String(row.updatedAt) : null,
-		collation: row.collation ? String(row.collation) : '',
-	};
-}
-
-function displayValue(value: unknown): string | null {
-	if (value === null || value === undefined) {
-		return null;
-	}
-	if (Buffer.isBuffer(value)) {
-		return `0x${value.toString('hex')}`;
-	}
-	if (typeof value === 'object') {
-		return JSON.stringify(value);
-	}
-	return String(value);
-}
-
-function editValue(value: unknown): string | null {
-	return displayValue(value);
-}
-
 function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, server: MysqlServer): string {
-	const nonce = crypto.randomUUID().replaceAll('-', '');
+	const nonce = createNonce();
 	const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(codiconsDistUri(extensionUri), 'codicon.css'));
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -648,7 +514,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 }
 
 function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, database: string, table: string): string {
-	const nonce = crypto.randomUUID().replaceAll('-', '');
+	const nonce = createNonce();
 	const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(codiconsDistUri(extensionUri), 'codicon.css'));
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -989,18 +855,6 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 	</script>
 </body>
 </html>`;
-}
-
-function codiconsDistUri(extensionUri: vscode.Uri): vscode.Uri {
-	return vscode.Uri.joinPath(extensionUri, 'node_modules', '@vscode', 'codicons', 'dist');
-}
-
-function escapeHtml(value: string): string {
-	return value
-		.replaceAll('&', '&amp;')
-		.replaceAll('"', '&quot;')
-		.replaceAll('<', '&lt;')
-		.replaceAll('>', '&gt;');
 }
 
 function errorMessage(error: unknown): string {

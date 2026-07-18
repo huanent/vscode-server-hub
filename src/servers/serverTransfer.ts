@@ -2,7 +2,6 @@ import { homedir } from 'node:os';
 import * as vscode from 'vscode';
 import { ExportedServer, parseServerExport, Server, ServerExportFile } from './server';
 import { ServerStore } from './serverStore';
-import { ServerTreeDataProvider } from './serverTree';
 
 export async function exportServers(serverStore: ServerStore): Promise<void> {
 	const servers = serverStore.getServers();
@@ -64,10 +63,7 @@ async function exportServerFile(servers: ExportedServer[], fileName: string): Pr
 	void vscode.window.showInformationMessage(`Exported ${formatServerCount(servers.length)}.`);
 }
 
-export async function importServers(
-	serverStore: ServerStore,
-	treeDataProvider: ServerTreeDataProvider,
-): Promise<void> {
+export async function importServers(serverStore: ServerStore): Promise<void> {
 	const selection = await vscode.window.showOpenDialog({
 		canSelectMany: false,
 		filters: { JSON: ['json'] },
@@ -96,7 +92,6 @@ export async function importServers(
 	}
 
 	await serverStore.importServers(importedServers);
-	treeDataProvider.refresh();
 	void vscode.window.showInformationMessage(`Imported ${formatServerCount(importedServers.length)}.`);
 }
 

@@ -4,6 +4,9 @@ import { ExportedServer, parseStoredServers, Server } from './server';
 const serversStateKey = 'server-hub.servers';
 
 export class ServerStore {
+	private readonly changeEmitter = new vscode.EventEmitter<void>();
+	readonly onDidChange = this.changeEmitter.event;
+
 	constructor(private readonly context: vscode.ExtensionContext) {}
 
 	getServers(): Server[] {
@@ -25,6 +28,7 @@ export class ServerStore {
 		if (password) {
 			await this.context.secrets.store(passwordKey(server.id), password);
 		}
+		this.changeEmitter.fire();
 	}
 
 	async deleteServer(serverId: string): Promise<void> {
@@ -38,6 +42,7 @@ export class ServerStore {
 			this.getServers().filter(server => !deletedIds.has(server.id)),
 		);
 		await Promise.all(serverIds.map(serverId => this.context.secrets.delete(passwordKey(serverId))));
+		this.changeEmitter.fire();
 	}
 
 	getPassword(serverId: string): Thenable<string | undefined> {
@@ -61,6 +66,11 @@ export class ServerStore {
 		await Promise.all(importedServers.map(server => server.password
 			? this.context.secrets.store(passwordKey(server.id), server.password)
 			: this.context.secrets.delete(passwordKey(server.id))));
+		this.changeEmitter.fire();
+	}
+
+	dispose(): void {
+		this.changeEmitter.dispose();
 	}
 }
 

@@ -25,11 +25,14 @@ export class ServerGroupTreeItem extends vscode.TreeItem {
 
 export type ServerTreeNode = ServerGroupTreeItem | ServerTreeItem;
 
-export class ServerTreeDataProvider implements vscode.TreeDataProvider<ServerTreeNode> {
+export class ServerTreeDataProvider implements vscode.TreeDataProvider<ServerTreeNode>, vscode.Disposable {
 	private readonly changeEmitter = new vscode.EventEmitter<ServerTreeNode | undefined>();
 	readonly onDidChangeTreeData = this.changeEmitter.event;
+	private readonly storeSubscription: vscode.Disposable;
 
-	constructor(private readonly serverStore: ServerStore) {}
+	constructor(private readonly serverStore: ServerStore) {
+		this.storeSubscription = serverStore.onDidChange(() => this.changeEmitter.fire(undefined));
+	}
 
 	getTreeItem(element: ServerTreeNode): vscode.TreeItem {
 		return element;
@@ -61,7 +64,8 @@ export class ServerTreeDataProvider implements vscode.TreeDataProvider<ServerTre
 		return [...groups, ...ungroupedServers];
 	}
 
-	refresh(): void {
-		this.changeEmitter.fire(undefined);
+	dispose(): void {
+		this.storeSubscription.dispose();
+		this.changeEmitter.dispose();
 	}
 }

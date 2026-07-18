@@ -1,13 +1,12 @@
 import * as vscode from 'vscode';
 import { normalizePassword, parseServerForm, Server, ServerFormMessage, ServerType } from './server';
 import { ServerStore } from './serverStore';
-import { ServerTreeDataProvider } from './serverTree';
+import { createNonce, escapeHtml } from '../webview/webviewUtils';
 
 export function configureServerForm(
 	context: vscode.ExtensionContext,
 	panel: vscode.WebviewPanel,
 	serverStore: ServerStore,
-	treeDataProvider: ServerTreeDataProvider,
 	serverType: ServerType,
 	existingServer?: Server,
 ): void {
@@ -35,7 +34,6 @@ export function configureServerForm(
 		}
 
 		await serverStore.saveServer(server, password || undefined);
-		treeDataProvider.refresh();
 		panel.dispose();
 		void vscode.window.showInformationMessage(`${isEditing ? 'Updated' : 'Saved'} ${typeLabel} server “${server.name}”.`);
 	}, undefined, context.subscriptions);
@@ -47,7 +45,7 @@ function renderServerForm(
 	groups: string[],
 	server?: Server,
 ): string {
-	const nonce = crypto.randomUUID().replaceAll('-', '');
+	const nonce = createNonce();
 	const isEditing = server !== undefined;
 	const typeLabel = serverType === 'mysql' ? 'MySQL' : 'SSH';
 	const title = `${isEditing ? 'Edit' : 'Add'} ${typeLabel} Server`;
@@ -185,12 +183,4 @@ function renderServerFields(serverType: ServerType, server: Server | undefined, 
 		<span class="field-label">Password${isEditing ? '' : ' <span class="required" aria-hidden="true">*</span>'}</span>
 		<input name="password" type="password" autocomplete="current-password" ${isEditing ? 'placeholder="Leave blank to keep the current password"' : 'required'}>
 	</label>`;
-}
-
-function escapeHtml(value: string): string {
-	return value
-		.replaceAll('&', '&amp;')
-		.replaceAll('"', '&quot;')
-		.replaceAll('<', '&lt;')
-		.replaceAll('>', '&gt;');
 }

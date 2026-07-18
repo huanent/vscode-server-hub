@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { Client, ClientChannel, FileEntryWithStats, SFTPWrapper } from 'ssh2';
 import { RemoteMetricsFormatter, RemoteMetricsReader } from './remoteMetrics';
-import { SshServer } from './server';
+import { SshServer } from '../servers/server';
+import { codiconsDistUri, createNonce, escapeHtml } from '../webview/webviewUtils';
 
 interface SshWebviewMessage {
 	type: 'input' | 'resize' | 'ready' | 'sftpList';
@@ -283,7 +284,7 @@ class SshWebviewSession {
 }
 
 function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xtermRoot: vscode.Uri, server: SshServer): string {
-	const nonce = crypto.randomUUID().replaceAll('-', '');
+	const nonce = createNonce();
 	const xtermCssUri = webview.asWebviewUri(vscode.Uri.joinPath(xtermRoot, 'xterm.css'));
 	const xtermJsUri = webview.asWebviewUri(vscode.Uri.joinPath(xtermRoot, 'xterm.js'));
 	const fitAddonJsUri = webview.asWebviewUri(vscode.Uri.joinPath(xtermRoot, 'addon-fit.js'));
@@ -561,17 +562,4 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 	</script>
 </body>
 </html>`;
-}
-
-function codiconsDistUri(extensionUri: vscode.Uri): vscode.Uri {
-	return vscode.Uri.joinPath(extensionUri, 'node_modules', '@vscode', 'codicons', 'dist');
-}
-
-function escapeHtml(value: string): string {
-	return value
-		.replaceAll('&', '&amp;')
-		.replaceAll('<', '&lt;')
-		.replaceAll('>', '&gt;')
-		.replaceAll('"', '&quot;')
-		.replaceAll("'", '&#039;');
 }
