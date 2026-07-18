@@ -124,7 +124,7 @@ class SshWebviewSession {
 	}
 
 	private connect(): void {
-		this.postMessage({ type: 'status', status: 'connecting', message: `Connecting to ${this.server.username}@${this.server.host}:${this.server.port}...` });
+		this.postMessage({ type: 'status', status: 'connecting', message: `${this.server.username}@${this.server.host}:${this.server.port}...` });
 		this.client
 			.on('keyboard-interactive', (_name, _instructions, _language, prompts, finish) => {
 				finish(prompts.map(() => this.password));
@@ -190,7 +190,9 @@ class SshWebviewSession {
 					})),
 			});
 		} catch (error) {
-			this.postMessage({ type: 'sftpError', message: error instanceof Error ? error.message : String(error) });
+			const message = error instanceof Error ? error.message : String(error);
+			this.postMessage({ type: 'sftpError' });
+			void vscode.window.showErrorMessage(`Could not load SFTP directory: ${message}`);
 		}
 	}
 
@@ -326,8 +328,8 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		.sftp-header, .sftp-entry { display: grid; grid-template-columns: minmax(140px, 1fr) 86px 130px; align-items: center; }
 		.sftp-header { padding: 0 12px; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); font-size: 11px; }
 		.sftp-header span:not(:first-child), .sftp-meta { text-align: right; }
-		.sftp-content { position: relative; min-height: 0; overflow: auto; }
-		.sftp-list { padding: 4px 0 4px 4px;}
+		.sftp-content { position: relative; min-height: 0; overflow: hidden; }
+		.sftp-list { height: 100%; padding: 4px 0 4px 4px; overflow: auto; }
 		.sftp-entry { min-height: 30px; padding: 0 6px; border-radius: 3px; cursor: default; }
 		.sftp-entry:hover { color: var(--vscode-list-hoverForeground); background: var(--vscode-list-hoverBackground); }
 		.sftp-name { display: flex; min-width: 0; align-items: center; gap: 7px; }
@@ -439,12 +441,12 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 			}
 			if (message.type === 'sftpLoading') {
 				sftpPath.disabled = true;
-				showSftpStatus('Loading ' + message.path + '...', false, true);
+				showSftpStatus('Loading ' + message.path + '...', true);
 			}
 			if (message.type === 'sftpEntries') renderSftpEntries(message);
 			if (message.type === 'sftpError') {
 				sftpPath.disabled = false;
-				showSftpStatus(message.message, true);
+				sftpStatus.hidden = true;
 			}
 		});
 		sftpUpButton.addEventListener('click', () => { if (parentSftpPath) loadSftp(parentSftpPath); });
@@ -524,7 +526,7 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 			return item;
 		}
 
-		function showSftpStatus(message, error, loading) {
+		function showSftpStatus(message, loading) {
 			const label = document.createElement('span');
 			label.textContent = message;
 			sftpStatus.classList.toggle('loading', Boolean(loading));
@@ -536,7 +538,6 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 			} else {
 				sftpStatus.replaceChildren(label);
 			}
-			sftpStatus.style.color = error ? 'var(--vscode-errorForeground)' : '';
 			sftpStatus.hidden = false;
 		}
 
