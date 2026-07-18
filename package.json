@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "Server Hub",
   "description": "Manage and connect to servers from VS Code.",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.125.0"
   },

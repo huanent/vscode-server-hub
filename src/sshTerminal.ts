@@ -298,9 +298,9 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 	<style>
 		:root { color-scheme: light dark; }
 		* { box-sizing: border-box; }
-		html, body { width: 100%; height: 100%; margin: 0; padding:0; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
+		html, body { width: 100%; height: 100%; margin: 0; padding:0 4px; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
 		body { display: grid; grid-template-rows: auto minmax(0, 1fr); }
-		.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); height: 34px; margin: 0 4px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
+		.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); height: 34px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
 		.metric { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 0 10px 0 13px; }
 		.metric::before { position: absolute; left: 5px; width: 3px; height: 12px; border-radius: 2px; background: var(--metric-accent); content: ''; }
 		.metric:nth-child(1) { --metric-accent: var(--vscode-charts-blue); }
@@ -312,20 +312,22 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		.metric-value { min-width: 0; overflow: hidden; color: var(--vscode-foreground); font-family: var(--vscode-editor-font-family); font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 		.workspace { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 0; }
 		.workspace.sftp-visible { grid-template-columns: minmax(320px, 3fr) minmax(280px, 2fr); }
-		.terminal-shell { position: relative; min-width: 0; min-height: 0; padding: 6px 4px 4px; }
+		.terminal-shell { position: relative; min-width: 0; min-height: 0; padding: 6px 0; }
 		#terminal { width: 100%; height: 100%; }
 		.sftp-panel { display: none; min-width: 0; min-height: 0; border-left: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); user-select: none; }
 		.workspace.sftp-visible .sftp-panel { display: grid; grid-template-rows: 38px 30px minmax(0, 1fr); }
-		.sftp-toolbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+		.sftp-toolbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 4px 0 4px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
 		.icon-button { display: inline-grid; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; place-items: center; color: var(--vscode-icon-foreground); background: transparent; cursor: pointer; }
 		.icon-button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
 		.icon-button:disabled { opacity: 0.4; cursor: default; }
-		.sftp-path { min-width: 0; overflow: hidden; color: var(--vscode-breadcrumb-foreground); font-family: var(--vscode-editor-font-family); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+		.sftp-path { width: 100%; min-width: 0; height: 26px; padding: 2px 6px; border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px; outline: none; color: var(--vscode-input-foreground); background: var(--vscode-input-background); font-family: var(--vscode-editor-font-family); font-size: 12px; }
+		.sftp-path:focus { border-color: var(--vscode-focusBorder); }
+		.sftp-path:disabled { opacity: 0.6; cursor: default; }
 		.sftp-header, .sftp-entry { display: grid; grid-template-columns: minmax(140px, 1fr) 86px 130px; align-items: center; }
 		.sftp-header { padding: 0 12px; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); font-size: 11px; }
 		.sftp-header span:not(:first-child), .sftp-meta { text-align: right; }
 		.sftp-content { position: relative; min-height: 0; overflow: auto; }
-		.sftp-list { padding: 4px 6px 10px; }
+		.sftp-list { padding: 4px 0 4px 4px;}
 		.sftp-entry { min-height: 30px; padding: 0 6px; border-radius: 3px; cursor: default; }
 		.sftp-entry:hover { color: var(--vscode-list-hoverForeground); background: var(--vscode-list-hoverBackground); }
 		.sftp-name { display: flex; min-width: 0; align-items: center; gap: 7px; }
@@ -333,7 +335,9 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		.sftp-name .folder { color: var(--vscode-symbolIcon-folderForeground, var(--vscode-icon-foreground)); }
 		.sftp-name span:last-child, .sftp-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 		.sftp-meta { color: var(--vscode-descriptionForeground); font-size: 11px; }
-		.sftp-status { position: absolute; inset: 0; display: grid; padding: 24px; place-items: center; color: var(--vscode-descriptionForeground); font-size: 12px; text-align: center; }
+		.sftp-status { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 24px; color: var(--vscode-descriptionForeground); font-size: 12px; text-align: center; }
+		.sftp-status.loading { background: color-mix(in srgb, var(--vscode-editor-background) 65%, transparent); }
+		.sftp-status .codicon { color: var(--vscode-progressBar-background); font-size: 16px; }
 		.sftp-status[hidden] { display: none; }
 		.connection-status { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; pointer-events: none; }
 		.connection-status[hidden] { display: none; }
@@ -371,13 +375,13 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		<aside class="sftp-panel" aria-label="SFTP file browser">
 			<header class="sftp-toolbar">
 				<button id="sftpUpButton" class="icon-button" type="button" title="Parent directory" aria-label="Parent directory"><i class="codicon codicon-arrow-up"></i></button>
-				<span id="sftpPath" class="sftp-path">SFTP</span>
+				<input id="sftpPath" class="sftp-path" type="text" aria-label="Remote path" spellcheck="false">
 				<button id="sftpRefreshButton" class="icon-button" type="button" title="Refresh" aria-label="Refresh"><i class="codicon codicon-refresh"></i></button>
 			</header>
 			<div class="sftp-header"><span>Name</span><span>Size</span><span>Modified</span></div>
 			<div class="sftp-content">
 				<div id="sftpList" class="sftp-list" role="listbox" aria-label="Remote files"></div>
-				<div id="sftpStatus" class="sftp-status" role="status">Loading...</div>
+				<div id="sftpStatus" class="sftp-status loading" role="status"><i class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></i><span>Loading...</span></div>
 			</div>
 		</aside>
 	</main>
@@ -407,6 +411,7 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 			cursorBlink: true,
 			fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--vscode-editor-font-family'),
 			fontSize: Number(getComputedStyle(document.documentElement).getPropertyValue('--vscode-editor-font-size').replace('px', '')) || 14,
+			overviewRuler: { width: 8 },
 			theme: terminalTheme(),
 			scrollback: 5000
 		});
@@ -432,12 +437,28 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 				workspace.classList.remove('sftp-visible');
 				requestAnimationFrame(fitTerminal);
 			}
-			if (message.type === 'sftpLoading') showSftpStatus('Loading ' + message.path + '...');
+			if (message.type === 'sftpLoading') {
+				sftpPath.disabled = true;
+				showSftpStatus('Loading ' + message.path + '...', false, true);
+			}
 			if (message.type === 'sftpEntries') renderSftpEntries(message);
-			if (message.type === 'sftpError') showSftpStatus(message.message, true);
+			if (message.type === 'sftpError') {
+				sftpPath.disabled = false;
+				showSftpStatus(message.message, true);
+			}
 		});
 		sftpUpButton.addEventListener('click', () => { if (parentSftpPath) loadSftp(parentSftpPath); });
 		sftpRefreshButton.addEventListener('click', () => loadSftp(currentSftpPath));
+		sftpPath.addEventListener('keydown', event => {
+			if (event.key === 'Enter') {
+				const remotePath = sftpPath.value.trim();
+				if (remotePath) loadSftp(remotePath);
+			}
+			if (event.key === 'Escape') {
+				sftpPath.value = currentSftpPath;
+				sftpPath.blur();
+			}
+		});
 		window.addEventListener('focus', () => terminal.focus());
 		window.addEventListener('resize', fitTerminal);
 
@@ -472,12 +493,13 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		function renderSftpEntries(message) {
 			currentSftpPath = message.path;
 			parentSftpPath = message.parentPath;
-			sftpPath.textContent = currentSftpPath;
+			sftpPath.disabled = false;
+			sftpPath.value = currentSftpPath;
 			sftpPath.title = currentSftpPath;
 			sftpUpButton.disabled = !parentSftpPath;
 			sftpList.replaceChildren(...message.entries.map(createSftpEntry));
 			sftpStatus.hidden = message.entries.length !== 0;
-			if (message.entries.length === 0) sftpStatus.textContent = 'This directory is empty.';
+			if (message.entries.length === 0) showSftpStatus('This directory is empty.');
 		}
 
 		function createSftpEntry(entry) {
@@ -502,8 +524,18 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 			return item;
 		}
 
-		function showSftpStatus(message, error) {
-			sftpStatus.textContent = message;
+		function showSftpStatus(message, error, loading) {
+			const label = document.createElement('span');
+			label.textContent = message;
+			sftpStatus.classList.toggle('loading', Boolean(loading));
+			if (loading) {
+				const icon = document.createElement('i');
+				icon.className = 'codicon codicon-loading codicon-modifier-spin';
+				icon.setAttribute('aria-hidden', 'true');
+				sftpStatus.replaceChildren(icon, label);
+			} else {
+				sftpStatus.replaceChildren(label);
+			}
 			sftpStatus.style.color = error ? 'var(--vscode-errorForeground)' : '';
 			sftpStatus.hidden = false;
 		}
