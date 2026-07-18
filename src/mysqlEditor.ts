@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Connection, createConnection, FieldPacket, RowDataPacket } from 'mysql2/promise';
+import { Connection, createConnection, FieldPacket, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { MysqlServer } from './server';
 
 interface MysqlEditorMessage {
@@ -9,11 +9,13 @@ interface MysqlEditorMessage {
 }
 
 interface MysqlTablePreviewMessage {
-	type: 'loadPage';
+	type: 'loadPage' | 'updateRow';
 	page?: unknown;
 	pageSize?: unknown;
 	sort?: unknown;
 	filters?: unknown;
+	rowId?: unknown;
+	values?: unknown;
 }
 
 interface MysqlTableSort {
@@ -24,6 +26,14 @@ interface MysqlTableSort {
 interface MysqlTableFilter {
 	column: string;
 	value: string;
+}
+
+interface MysqlColumnInfo {
+	name: string;
+	dataType: string;
+	nullable: boolean;
+	primaryKey: boolean;
+	editable: boolean;
 }
 
 const tablePageSizes = new Set([50, 100, 300, 500, 1000]);
@@ -168,12 +178,21 @@ export function configureMysqlTablePreview(
 	let connection: Connection | undefined;
 	let disposed = false;
 	let columns: string[] = [];
+	let columnInfo: MysqlColumnInfo[] = [];
 	let columnNames = new Set<string>();
+	let editableColumnNames = new Set<string>();
+	let primaryKeyColumns: string[] = [];
+	let pageRows = new Map<string, RowDataPacket>();
+	let currentRequest = { page: 1, pageSize: 100, sort: undefined as MysqlTableSort | undefined, filters: [] as MysqlTableFilter[] };
 	panel.onDidDispose(() => {
 		disposed = true;
 		void connection?.end();
 	});
 	panel.webview.onDidReceiveMessage(async (message: MysqlTablePreviewMessage) => {
+		if (message.type === 'updateRow') {
+			await updateRow(message.rowId, message.values);
+			return;
+		}
 		if (
 			message.type !== 'loadPage'
 			|| typeof message.page !== 'number'
@@ -200,6 +219,23 @@ export function configureMysqlTablePreview(
 			const [, fields] = await connection.query<RowDataPacket[]>('SELECT * FROM ??.?? LIMIT 0', [database, table]);
 			columns = fields.map((field: FieldPacket) => field.name);
 			columnNames = new Set(columns);
+			const [metadataRows] = await connection.query<RowDataPacket[]>(
+				`SELECT COLUMN_NAME AS name, DATA_TYPE AS dataType, IS_NULLABLE AS isNullable,
+					COLUMN_KEY AS columnKey, EXTRA AS extra, GENERATION_EXPRESSION AS generationExpression
+				FROM information_schema.COLUMNS
+				WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+				ORDER BY ORDINAL_POSITION`,
+				[database, table],
+			);
+			columnInfo = metadataRows.map(row => ({
+				name: String(row.name),
+				dataType: String(row.dataType),
+				nullable: row.isNullable === 'YES',
+				primaryKey: row.columnKey === 'PRI',
+				editable: !String(row.extra ?? '').includes('GENERATED') && !String(row.generationExpression ?? ''),
+			}));
+			editableColumnNames = new Set(columnInfo.filter(column => column.editable).map(column => column.name));
+			primaryKeyColumns = columnInfo.filter(column => column.primaryKey).map(column => column.name);
 			await loadPage(1, 100, undefined, []);
 		} catch (error) {
 			void panel.webview.postMessage({ type: 'tableError', message: errorMessage(error) });
@@ -210,6 +246,7 @@ export function configureMysqlTablePreview(
 		if (!connection) {
 			return;
 		}
+		currentRequest = { page, pageSize, sort, filters };
 		void panel.webview.postMessage({ type: 'tableLoading' });
 		try {
 			const whereClause = filters.length === 0
@@ -229,10 +266,23 @@ export function configureMysqlTablePreview(
 				`SELECT * FROM ??.??${whereClause}${orderClause} LIMIT ? OFFSET ?`,
 				[database, table, ...filterParameters, ...(sort ? [sort.column] : []), pageSize, offset],
 			);
+			pageRows = new Map();
+			const tableRows = rows.map(row => {
+				const rowId = crypto.randomUUID();
+				pageRows.set(rowId, row);
+				return {
+					rowId,
+					values: columns.map(column => displayValue(row[column])),
+					editValues: columns.map(column => editValue(row[column])),
+				};
+			});
 			void panel.webview.postMessage({
 				type: 'tableData',
 				columns,
-				rows: rows.map(row => columns.map(column => displayValue(row[column]))),
+				columnInfo,
+				rows: tableRows,
+				canEdit: primaryKeyColumns.length > 0,
+				editDisabledReason: primaryKeyColumns.length > 0 ? undefined : 'Rows cannot be edited because this table has no primary key.',
 				page: currentPage,
 				pageSize,
 				totalRows,
@@ -244,6 +294,70 @@ export function configureMysqlTablePreview(
 			void panel.webview.postMessage({ type: 'tableError', message: errorMessage(error) });
 		}
 	}
+
+	async function updateRow(rowIdValue: unknown, valuesValue: unknown): Promise<void> {
+		if (!connection || typeof rowIdValue !== 'string' || primaryKeyColumns.length === 0) {
+			return;
+		}
+		const originalRow = pageRows.get(rowIdValue);
+		const changes = parseRowChanges(valuesValue, editableColumnNames, columnInfo);
+		if (!originalRow || changes.length === 0) {
+			return;
+		}
+		try {
+			const setClause = changes.map(() => '?? = ?').join(', ');
+			const whereClause = primaryKeyColumns.map(() => '?? <=> ?').join(' AND ');
+			const parameters = [
+				database,
+				table,
+				...changes.flatMap(change => [change.column, change.value]),
+				...primaryKeyColumns.flatMap(column => [column, originalRow[column]]),
+			];
+			const [result] = await connection.query<ResultSetHeader>(
+				`UPDATE ??.?? SET ${setClause} WHERE ${whereClause} LIMIT 1`,
+				parameters,
+			);
+			if (result.affectedRows !== 1) {
+				throw new Error('The row was not updated. It may have been changed or deleted.');
+			}
+			void panel.webview.postMessage({ type: 'rowUpdated' });
+			await loadPage(currentRequest.page, currentRequest.pageSize, currentRequest.sort, currentRequest.filters);
+		} catch (error) {
+			void panel.webview.postMessage({ type: 'rowUpdateError', message: errorMessage(error) });
+		}
+	}
+}
+
+function parseRowChanges(
+	value: unknown,
+	editableColumnNames: Set<string>,
+	columnInfo: MysqlColumnInfo[],
+): Array<{ column: string; value: unknown }> {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		return [];
+	}
+	const values = value as Record<string, unknown>;
+	const metadata = new Map(columnInfo.map(column => [column.name, column]));
+	return Object.entries(values).flatMap(([column, fieldValue]) => {
+		if (!editableColumnNames.has(column) || (fieldValue !== null && typeof fieldValue !== 'string')) {
+			return [];
+		}
+		const info = metadata.get(column);
+		if (!info || (fieldValue === null && !info.nullable)) {
+			return [];
+		}
+		return [{ column, value: parseEditValue(fieldValue, info.dataType) }];
+	});
+}
+
+function parseEditValue(value: string | null, dataType: string): unknown {
+	if (value === null) {
+		return null;
+	}
+	if (['binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob', 'bit'].includes(dataType) && /^0x[\da-f]*$/i.test(value)) {
+		return Buffer.from(value.slice(2), 'hex');
+	}
+	return value;
 }
 
 function parseTableSort(value: unknown, columnNames: Set<string>): MysqlTableSort | undefined {
@@ -313,6 +427,10 @@ function displayValue(value: unknown): string | null {
 		return JSON.stringify(value);
 	}
 	return String(value);
+}
+
+function editValue(value: unknown): string | null {
+	return displayValue(value);
 }
 
 function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, server: MysqlServer): string {
@@ -545,7 +663,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		* { box-sizing: border-box; }
 		html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
 		body { display: grid; grid-template-rows: 42px minmax(0, 1fr); padding: 0 4px; }
-		button, select, input { font: inherit; }
+		button, select, input, textarea { font: inherit; }
 		header { position: relative; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 0 10px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
 		.path { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 		.pagination { display: flex; margin-left: auto; align-items: center; gap: 6px; }
@@ -554,18 +672,19 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		.icon-button { display: inline-grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 4px; color: var(--vscode-icon-foreground); background: transparent; cursor: pointer; }
 		.icon-button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
 		.icon-button:disabled { opacity: 0.4; cursor: default; }
-		.icon-button:focus-visible, .page-size:focus-visible, .column-sort:focus-visible, .column-filter:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-		#content { min-width: 0; overflow: auto; }
+		.icon-button:focus-visible, .page-size:focus-visible, .column-sort:focus-visible, .column-filter:focus-visible, .field-input:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+		.content-clip { min-width: 0; min-height: 0; overflow: hidden; }
+		#content { width: 100%; height: 100%; overflow: auto; }
 		.status { display: grid; height: 100%; padding: 24px; place-items: center; color: var(--vscode-descriptionForeground); text-align: center; }
 		.error { color: var(--vscode-errorForeground); white-space: pre-wrap; }
-		table { width: max-content; min-width: 100%; border-collapse: collapse; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
+		table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
 		th, td { max-width: 420px; height: 28px; overflow: hidden; padding: 5px 10px; border-right: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 		th { position: sticky; top: 0; z-index: 1; padding: 0; background: var(--vscode-editor-background); font-family: var(--vscode-font-family); font-size: 12px; font-weight: 600; }
 		.column-heading { display: grid; grid-template-columns: minmax(80px, 1fr) auto; align-items: center; min-width: 150px; }
-		.column-sort { display: flex; min-width: 0; height: 28px; padding: 5px 4px 5px 10px; align-items: center; gap: 6px; overflow: hidden; border: 0; color: inherit; background: transparent; cursor: pointer; text-align: left; }
-		.column-sort:hover { color: var(--vscode-textLink-foreground); }
-		.column-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-		.sort-icon { display: inline-grid; flex: 0 0 auto; grid-template-rows: 6px 6px; gap: 2px; color: var(--vscode-descriptionForeground); }
+		.column-name { min-width: 0; padding: 5px 4px 5px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.sort-controls { display: grid; grid-template-rows: 14px 14px; width: 20px; height: 28px; }
+		.column-sort { display: inline-grid; width: 20px; height: 14px; padding: 0; place-items: center; border: 0; color: var(--vscode-descriptionForeground); background: transparent; cursor: pointer; }
+		.column-sort:hover, .column-sort[aria-pressed="true"] { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); }
 		.sort-arrow { width: 0; height: 0; border-right: 4px solid transparent; border-left: 4px solid transparent; opacity: 0.55; }
 		.sort-arrow.up { border-bottom: 6px solid currentColor; }
 		.sort-arrow.down { border-top: 6px solid currentColor; }
@@ -574,6 +693,32 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		.column-filter::placeholder { color: var(--vscode-input-placeholderForeground); }
 		tr:hover td { background: var(--vscode-list-hoverBackground); }
 		.null { color: var(--vscode-descriptionForeground); font-style: italic; }
+		.action-column, .row-action { position: sticky; right: 0; width: 58px; min-width: 58px; max-width: 58px; padding: 0; text-align: center; }
+		.action-column { z-index: 2; background: transparent; }
+		.row-action { z-index: 1; background: var(--vscode-editor-background); }
+		.row-actions { display: flex; align-items: center; justify-content: center; gap: 2px; background: transparent; }
+		tr:hover .row-action { background: var(--vscode-list-hoverBackground); }
+		dialog { width: min(680px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 32px)); padding: 0; overflow: hidden; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 6px; color: var(--vscode-foreground); background: var(--vscode-editor-background); box-shadow: 0 12px 38px rgba(0, 0, 0, 0.35); }
+		dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+		.edit-form { display: grid; max-height: inherit; grid-template-rows: auto minmax(0, 1fr) auto; }
+		.dialog-header, .dialog-footer { display: flex; min-height: 48px; padding: 8px 14px; align-items: center; gap: 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+		.dialog-header h2 { min-width: 0; margin: 0; overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+		.dialog-header .icon-button { margin-left: auto; }
+		.dialog-fields { display: grid; gap: 12px; padding: 14px; overflow: auto; }
+		.edit-field { display: grid; gap: 5px; }
+		.field-label { display: flex; align-items: center; gap: 7px; color: var(--vscode-descriptionForeground); font-size: 12px; }
+		.field-label strong { color: var(--vscode-foreground); font-weight: 600; }
+		.field-type { margin-left: auto; font-family: var(--vscode-editor-font-family); font-size: 11px; }
+		.field-input { width: 100%; min-height: 28px; padding: 4px 7px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); resize: vertical; }
+		.field-input:disabled { opacity: 0.55; }
+		.null-toggle { display: inline-flex; align-items: center; gap: 4px; }
+		.dialog-error { min-height: 18px; margin: 0; color: var(--vscode-errorForeground); font-size: 12px; }
+		.dialog-footer { justify-content: flex-end; border-top: 1px solid var(--vscode-panel-border); border-bottom: 0; }
+		.button { min-width: 72px; height: 28px; padding: 3px 12px; border: 1px solid transparent; border-radius: 2px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); cursor: pointer; }
+		.button:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
+		.button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
+		.button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+		.button:disabled { opacity: 0.5; cursor: default; }
 		@media (max-width: 620px) { .count { display: none; } header { gap: 6px; padding: 0 4px; } .pagination { gap: 2px; } }
 	</style>
 </head>
@@ -590,7 +735,21 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			<button id="nextPage" class="icon-button" type="button" title="Next page" aria-label="Next page" disabled><i class="codicon codicon-chevron-right"></i></button>
 		</nav>
 	</header>
-	<div id="content"><div class="status">Loading records...</div></div>
+	<div class="content-clip"><div id="content"><div class="status">Loading records...</div></div></div>
+	<dialog id="editDialog" aria-labelledby="editDialogTitle">
+		<form id="editForm" class="edit-form" method="dialog">
+			<div class="dialog-header">
+				<h2 id="editDialogTitle">Edit row</h2>
+				<button id="closeDialog" class="icon-button" type="button" title="Close" aria-label="Close"><i class="codicon codicon-close"></i></button>
+			</div>
+			<div id="dialogFields" class="dialog-fields"></div>
+			<div class="dialog-footer">
+				<p id="dialogError" class="dialog-error" role="alert"></p>
+				<button id="cancelEdit" class="button secondary" type="button">Cancel</button>
+				<button id="saveEdit" class="button" type="submit">Save</button>
+			</div>
+		</form>
+	</dialog>
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
 		const content = document.getElementById('content');
@@ -599,21 +758,53 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		const previousPage = document.getElementById('previousPage');
 		const nextPage = document.getElementById('nextPage');
 		const pageStatus = document.getElementById('pageStatus');
+		const editDialog = document.getElementById('editDialog');
+		const editDialogTitle = document.getElementById('editDialogTitle');
+		const editForm = document.getElementById('editForm');
+		const dialogFields = document.getElementById('dialogFields');
+		const dialogError = document.getElementById('dialogError');
+		const cancelEdit = document.getElementById('cancelEdit');
+		const saveEdit = document.getElementById('saveEdit');
 		let currentPage = 1;
 		let totalPages = 1;
 		let sort;
+		let editingRow;
+		let tableMessage;
+		let pendingScrollPosition;
 		const filters = new Map();
 		let filterTimer;
 		window.addEventListener('message', event => {
 			const message = event.data;
-			if (message.type === 'tableLoading') { pageSize.disabled = true; renderStatus('Loading records...'); }
+			if (message.type === 'tableLoading') { pageSize.disabled = true; if (!tableMessage) renderStatus('Loading records...'); }
 			if (message.type === 'tableData') renderTable(message);
 			if (message.type === 'tableError') renderError(message.message);
+			if (message.type === 'rowUpdated') editDialog.close();
+			if (message.type === 'rowUpdateError') { dialogError.textContent = message.message; saveEdit.disabled = false; }
 		});
 		pageSize.addEventListener('change', () => loadPage(1));
 		previousPage.addEventListener('click', () => loadPage(currentPage - 1));
 		nextPage.addEventListener('click', () => loadPage(currentPage + 1));
+		document.getElementById('closeDialog').addEventListener('click', () => editDialog.close());
+		cancelEdit.addEventListener('click', () => editDialog.close());
+		editForm.addEventListener('submit', event => {
+			event.preventDefault();
+			if (!editingRow || !tableMessage) return;
+			const values = {};
+			for (const field of dialogFields.querySelectorAll('.edit-field')) {
+				const column = field.dataset.column;
+				const input = field.querySelector('.field-input');
+				const nullToggle = field.querySelector('.null-checkbox');
+				const originalValue = editingRow.editValues[tableMessage.columns.indexOf(column)];
+				const value = nullToggle?.checked ? null : input.value;
+				if (value !== originalValue) values[column] = value;
+			}
+			if (Object.keys(values).length === 0) { editDialog.close(); return; }
+			dialogError.textContent = '';
+			saveEdit.disabled = true;
+			vscode.postMessage({ type: 'updateRow', rowId: editingRow.rowId, values });
+		});
 		function renderTable(message) {
+			tableMessage = message;
 			currentPage = message.page;
 			totalPages = message.totalPages;
 			sort = message.sort;
@@ -632,27 +823,29 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 				const cell = document.createElement('th');
 				const heading = document.createElement('div');
 				heading.className = 'column-heading';
-				const sortButton = document.createElement('button');
-				sortButton.className = 'column-sort';
-				sortButton.type = 'button';
-				sortButton.title = 'Sort by ' + column;
 				const columnName = document.createElement('span');
 				columnName.className = 'column-name';
 				columnName.textContent = column;
-				const sortIcon = document.createElement('span');
 				const direction = sort?.column === column ? sort.direction : undefined;
-				sortIcon.className = 'sort-icon';
-				const ascendingIcon = document.createElement('i');
-				ascendingIcon.className = 'sort-arrow up' + (direction === 'asc' ? ' active' : '');
-				const descendingIcon = document.createElement('i');
-				descendingIcon.className = 'sort-arrow down' + (direction === 'desc' ? ' active' : '');
-				sortIcon.append(ascendingIcon, descendingIcon);
-				sortButton.setAttribute('aria-label', 'Sort by ' + column + (direction ? ', currently ' + direction : ''));
-				sortButton.append(columnName, sortIcon);
-				sortButton.addEventListener('click', () => {
-					sort = sort?.column === column && sort.direction === 'asc' ? { column, direction: 'desc' } : { column, direction: 'asc' };
-					loadPage(1);
-				});
+				const sortControls = document.createElement('span');
+				sortControls.className = 'sort-controls';
+				for (const sortDirection of ['asc', 'desc']) {
+					const sortButton = document.createElement('button');
+					const active = direction === sortDirection;
+					sortButton.className = 'column-sort';
+					sortButton.type = 'button';
+					sortButton.title = (sortDirection === 'asc' ? 'Sort ascending by ' : 'Sort descending by ') + column;
+					sortButton.setAttribute('aria-label', sortButton.title);
+					sortButton.setAttribute('aria-pressed', String(active));
+					const sortIcon = document.createElement('i');
+					sortIcon.className = 'sort-arrow ' + (sortDirection === 'asc' ? 'up' : 'down') + (active ? ' active' : '');
+					sortButton.append(sortIcon);
+					sortButton.addEventListener('click', () => {
+						sort = sort?.column === column && sort.direction === sortDirection ? undefined : { column, direction: sortDirection };
+						loadPage(1);
+					});
+					sortControls.append(sortButton);
+				}
 				const filter = document.createElement('input');
 				filter.className = 'column-filter';
 				filter.type = 'search';
@@ -668,22 +861,105 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 				filter.addEventListener('keydown', event => {
 					if (event.key === 'Enter') { clearTimeout(filterTimer); loadPage(1); }
 				});
-				heading.append(sortButton, filter);
+				heading.append(columnName, sortControls, filter);
 				cell.append(heading);
 				head.append(cell);
 			}
+			const actionHeader = document.createElement('th');
+			actionHeader.className = 'action-column';
+			actionHeader.title = 'Row actions';
+			head.append(actionHeader);
 			const body = table.createTBody();
 			for (const row of message.rows) {
 				const tableRow = body.insertRow();
-				for (const value of row) {
+				for (const value of row.values) {
 					const cell = tableRow.insertCell();
 					if (value === null) { cell.textContent = 'NULL'; cell.className = 'null'; }
 					else { cell.textContent = value; cell.title = value; }
 				}
+				const actionCell = tableRow.insertCell();
+				actionCell.className = 'row-action';
+				const actions = document.createElement('div');
+				actions.className = 'row-actions';
+				const viewButton = document.createElement('button');
+				viewButton.className = 'icon-button';
+				viewButton.type = 'button';
+				viewButton.title = 'View row';
+				viewButton.setAttribute('aria-label', viewButton.title);
+				viewButton.innerHTML = '<i class="codicon codicon-eye"></i>';
+				viewButton.addEventListener('click', () => openRowDialog(row, true));
+				const editButton = document.createElement('button');
+				editButton.className = 'icon-button';
+				editButton.type = 'button';
+				editButton.title = message.canEdit ? 'Edit row' : message.editDisabledReason;
+				editButton.setAttribute('aria-label', editButton.title);
+				editButton.disabled = !message.canEdit;
+				editButton.innerHTML = '<i class="codicon codicon-edit"></i>';
+				editButton.addEventListener('click', () => openRowDialog(row, false));
+				actions.append(viewButton, editButton);
+				actionCell.append(actions);
 			}
 			content.replaceChildren(table);
+			if (pendingScrollPosition) {
+				content.scrollLeft = pendingScrollPosition.left;
+				content.scrollTop = pendingScrollPosition.top;
+				pendingScrollPosition = undefined;
+			}
+		}
+		function openRowDialog(row, readOnly) {
+			editingRow = readOnly ? undefined : row;
+			editDialogTitle.textContent = readOnly ? 'View row' : 'Edit row';
+			dialogError.textContent = '';
+			cancelEdit.textContent = readOnly ? 'Close' : 'Cancel';
+			saveEdit.hidden = readOnly;
+			saveEdit.disabled = readOnly;
+			dialogFields.replaceChildren(...tableMessage.columnInfo.filter(column => readOnly || column.editable).map(column => {
+				const columnIndex = tableMessage.columns.indexOf(column.name);
+				const value = row.editValues[columnIndex];
+				const field = document.createElement('label');
+				field.className = 'edit-field';
+				field.dataset.column = column.name;
+				const label = document.createElement('span');
+				label.className = 'field-label';
+				const name = document.createElement('strong');
+				name.textContent = column.name;
+				const type = document.createElement('span');
+				type.className = 'field-type';
+				type.textContent = column.dataType + (column.primaryKey ? ' · primary key' : '');
+				label.append(name);
+				let nullToggle;
+				if (column.nullable && !readOnly) {
+					const nullLabel = document.createElement('span');
+					nullLabel.className = 'null-toggle';
+					nullToggle = document.createElement('input');
+					nullToggle.className = 'null-checkbox';
+					nullToggle.type = 'checkbox';
+					nullToggle.checked = value === null;
+					nullLabel.append(nullToggle, document.createTextNode('NULL'));
+					label.append(nullLabel);
+				}
+				label.append(type);
+				const multiline = ['text', 'tinytext', 'mediumtext', 'longtext', 'json'].includes(column.dataType);
+				const input = document.createElement(multiline ? 'textarea' : 'input');
+				input.className = 'field-input';
+				if (!multiline) input.type = inputType(column.dataType);
+				input.value = readOnly && value === null ? 'NULL' : value ?? '';
+				input.disabled = readOnly || value === null;
+				if (nullToggle) nullToggle.addEventListener('change', () => { input.disabled = nullToggle.checked; });
+				field.append(label, input);
+				return field;
+			}));
+			editDialog.showModal();
+			const firstInput = dialogFields.querySelector('.field-input:not(:disabled)');
+			if (firstInput) firstInput.focus();
+		}
+		function inputType(dataType) {
+			if (dataType === 'date') return 'date';
+			if (dataType === 'time') return 'time';
+			return 'text';
 		}
 		function loadPage(page) {
+			pendingScrollPosition = { left: content.scrollLeft, top: content.scrollTop };
 			previousPage.disabled = true;
 			nextPage.disabled = true;
 			vscode.postMessage({
