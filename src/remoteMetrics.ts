@@ -1,6 +1,6 @@
 import { Client } from 'ssh2';
 
-interface RemoteMetricsSnapshot {
+export interface RemoteMetricsSnapshot {
 	cpuTotalTicks: number | undefined;
 	cpuIdleTicks: number | undefined;
 	cpuUsage: number | undefined;
@@ -10,6 +10,13 @@ interface RemoteMetricsSnapshot {
 	networkInterface: string | undefined;
 	networkRxBytes: number | undefined;
 	networkTxBytes: number | undefined;
+}
+
+export interface RemoteMetricsDisplay {
+	cpu: string;
+	memory: string;
+	disk: string;
+	network: string;
 }
 
 interface CpuSample {
@@ -70,17 +77,17 @@ export class RemoteMetricsReader {
 	}
 }
 
-export class RemoteMetricsStatusFormatter {
+export class RemoteMetricsFormatter {
 	private previousCpuSample: CpuSample | undefined;
 	private previousNetworkSample: NetworkSample | undefined;
 
-	format(metrics: RemoteMetricsSnapshot): string {
-		return [
-			formatMetricSlot('CPU', this.formatCpuUsage(metrics), 12),
-			formatMetricSlot('MEM', formatMemoryUsage(metrics.memoryUsedMb, metrics.memoryTotalMb), 18),
-			formatMetricSlot('DISK', formatPercent(metrics.diskUsage), 14),
-			formatMetricSlot('NETWORK', this.formatNetworkThroughput(metrics), 26),
-		].join('  ');
+	format(metrics: RemoteMetricsSnapshot): RemoteMetricsDisplay {
+		return {
+			cpu: this.formatCpuUsage(metrics),
+			memory: formatMemoryUsage(metrics.memoryUsedMb, metrics.memoryTotalMb),
+			disk: formatPercent(metrics.diskUsage),
+			network: this.formatNetworkThroughput(metrics),
+		};
 	}
 
 	reset(): void {
@@ -221,16 +228,6 @@ function formatByteRate(bytesPerSecond: number): string {
 	return `${bytesPerSecond.toFixed(0)}B/s`;
 }
 
-function formatMetricSlot(label: string, value: string, width: number): string {
-	const normalizedValue = collapseWhitespace(value) || '--';
-	const valueWidth = Math.max(width - label.length - 1, 2);
-	return `${label} ${normalizedValue.slice(0, valueWidth).padStart(valueWidth, ' ')}`;
-}
-
 function clampPercent(value: number): number {
 	return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) : 0;
-}
-
-export function collapseWhitespace(value: string): string {
-	return value.replace(/\s+/gu, ' ').trim();
 }

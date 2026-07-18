@@ -71,7 +71,7 @@ async function connectToServer(
 	}
 
 	if (server.type === 'ssh') {
-		openSshTerminal(server, password);
+		openSshTerminal(context.extensionUri, server, password);
 		return;
 	}
 
