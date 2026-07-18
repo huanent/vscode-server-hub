@@ -44,7 +44,7 @@
       "server-hub": [
         {
           "id": "server-hub.servers",
-          "name": "Server List",
+          "name": "Server Hub",
           "icon": "resources/server.svg"
         }
       ]

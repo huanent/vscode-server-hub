@@ -12,6 +12,18 @@ interface MysqlTablePreviewMessage {
 	type: 'loadPage';
 	page?: unknown;
 	pageSize?: unknown;
+	sort?: unknown;
+	filters?: unknown;
+}
+
+interface MysqlTableSort {
+	column: string;
+	direction: 'asc' | 'desc';
+}
+
+interface MysqlTableFilter {
+	column: string;
+	value: string;
 }
 
 const tablePageSizes = new Set([50, 100, 300, 500, 1000]);
@@ -155,7 +167,8 @@ export function configureMysqlTablePreview(
 
 	let connection: Connection | undefined;
 	let disposed = false;
-	let totalRows = 0;
+	let columns: string[] = [];
+	let columnNames = new Set<string>();
 	panel.onDidDispose(() => {
 		disposed = true;
 		void connection?.end();
@@ -171,7 +184,9 @@ export function configureMysqlTablePreview(
 		) {
 			return;
 		}
-		await loadPage(message.page, message.pageSize);
+		const sort = parseTableSort(message.sort, columnNames);
+		const filters = parseTableFilters(message.filters, columnNames);
+		await loadPage(message.page, message.pageSize, sort, filters);
 	});
 	void connectAndLoad();
 
@@ -182,37 +197,83 @@ export function configureMysqlTablePreview(
 				await connection.end();
 				return;
 			}
-			const [countRows] = await connection.query<RowDataPacket[]>('SELECT COUNT(*) AS total FROM ??.??', [database, table]);
-			totalRows = Number(countRows[0]?.total) || 0;
-			await loadPage(1, 100);
+			const [, fields] = await connection.query<RowDataPacket[]>('SELECT * FROM ??.?? LIMIT 0', [database, table]);
+			columns = fields.map((field: FieldPacket) => field.name);
+			columnNames = new Set(columns);
+			await loadPage(1, 100, undefined, []);
 		} catch (error) {
 			void panel.webview.postMessage({ type: 'tableError', message: errorMessage(error) });
 		}
 	}
 
-	async function loadPage(page: number, pageSize: number): Promise<void> {
+	async function loadPage(page: number, pageSize: number, sort: MysqlTableSort | undefined, filters: MysqlTableFilter[]): Promise<void> {
 		if (!connection) {
 			return;
 		}
-		const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
-		const currentPage = Math.min(page, totalPages);
 		void panel.webview.postMessage({ type: 'tableLoading' });
 		try {
+			const whereClause = filters.length === 0
+				? ''
+				: ` WHERE ${filters.map(() => 'LOCATE(?, CAST(?? AS CHAR)) > 0').join(' AND ')}`;
+			const filterParameters = filters.flatMap(filter => [filter.value, filter.column]);
+			const [countRows] = await connection.query<RowDataPacket[]>(
+				`SELECT COUNT(*) AS total FROM ??.??${whereClause}`,
+				[database, table, ...filterParameters],
+			);
+			const totalRows = Number(countRows[0]?.total) || 0;
+			const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+			const currentPage = Math.min(page, totalPages);
 			const offset = (currentPage - 1) * pageSize;
-			const [rows, fields] = await connection.query<RowDataPacket[]>('SELECT * FROM ??.?? LIMIT ? OFFSET ?', [database, table, pageSize, offset]);
+			const orderClause = sort ? ` ORDER BY ?? ${sort.direction === 'asc' ? 'ASC' : 'DESC'}` : '';
+			const [rows] = await connection.query<RowDataPacket[]>(
+				`SELECT * FROM ??.??${whereClause}${orderClause} LIMIT ? OFFSET ?`,
+				[database, table, ...filterParameters, ...(sort ? [sort.column] : []), pageSize, offset],
+			);
 			void panel.webview.postMessage({
 				type: 'tableData',
-				columns: fields.map((field: FieldPacket) => field.name),
-				rows: rows.map(row => fields.map((field: FieldPacket) => displayValue(row[field.name]))),
+				columns,
+				rows: rows.map(row => columns.map(column => displayValue(row[column]))),
 				page: currentPage,
 				pageSize,
 				totalRows,
 				totalPages,
+				sort,
+				filters,
 			});
 		} catch (error) {
 			void panel.webview.postMessage({ type: 'tableError', message: errorMessage(error) });
 		}
 	}
+}
+
+function parseTableSort(value: unknown, columnNames: Set<string>): MysqlTableSort | undefined {
+	if (!value || typeof value !== 'object') {
+		return undefined;
+	}
+	const sort = value as Record<string, unknown>;
+	return typeof sort.column === 'string'
+		&& columnNames.has(sort.column)
+		&& (sort.direction === 'asc' || sort.direction === 'desc')
+		? { column: sort.column, direction: sort.direction }
+		: undefined;
+}
+
+function parseTableFilters(value: unknown, columnNames: Set<string>): MysqlTableFilter[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return value.flatMap(item => {
+		if (!item || typeof item !== 'object') {
+			return [];
+		}
+		const filter = item as Record<string, unknown>;
+		return typeof filter.column === 'string'
+			&& columnNames.has(filter.column)
+			&& typeof filter.value === 'string'
+			&& filter.value.length > 0
+			? [{ column: filter.column, value: filter.value }]
+			: [];
+	});
 }
 
 function createMysqlConnection(server: MysqlServer, password: string, database?: string): Promise<Connection> {
@@ -285,10 +346,11 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.separator { color: var(--vscode-breadcrumb-foreground); font-size: 14px; }
 		#databaseSelect { min-width: 120px; max-width: 280px; height: 26px; padding: 2px 24px 2px 7px; border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: 4px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); }
 		main { height: calc(100% - 46px); overflow: auto; }
-		.column-header, .table-list.list-view .table-entry { display: grid; grid-template-columns: minmax(190px, 1fr) 110px 110px minmax(160px, 210px) 130px; align-items: center; }
-		.column-header { position: sticky; top: 0; z-index: 2; height: 30px; padding: 0 14px 0 20px; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); background: var(--vscode-editor-background); font-size: 12px; }
+		.column-header, .table-list.list-view .table-entry { display: grid; grid-template-columns: minmax(190px, 1fr) 110px minmax(160px, 210px) 130px; align-items: center; }
+		.column-header { position: sticky; top: 0; z-index: 2; height: 30px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); background: var(--vscode-editor-background); font-size: 12px; }
 		.column-header[hidden] { display: none; }
 		.column-header span:not(:first-child) { text-align: right; }
+		.column-header span:nth-child(2), .column-header span:nth-child(3) { padding-left: 12px; text-align: left; }
 		.table-list.list-view { padding: 4px 8px 12px; }
 		.table-list.list-view .table-entry { min-height: 32px; padding: 0 6px 0 10px; border-radius: 3px; }
 		.table-entry { color: var(--vscode-foreground); cursor: default; }
@@ -313,9 +375,10 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.table-list.list-view .grid-details { display: contents; }
 		.table-list.list-view .grid-detail { display: contents; }
 		.table-list.list-view .grid-label { display: none; }
+		.table-list.list-view .grid-detail:nth-child(1) .entry-meta, .table-list.list-view .grid-detail:nth-child(2) .entry-meta { text-align: left; }
 		.status { padding: 44px 0; color: var(--vscode-descriptionForeground); text-align: center; }
 		.error { color: var(--vscode-errorForeground); }
-		@media (max-width: 760px) { .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px; } .column-header span:nth-child(3), .column-header span:nth-child(4), .table-list.list-view .grid-detail:nth-child(2), .table-list.list-view .grid-detail:nth-child(3) { display: none; } .connection-name { display: none; } }
+		@media (max-width: 760px) { .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px; } .column-header span:nth-child(3), .table-list.list-view .grid-detail:nth-child(2) { display: none; } .connection-name { display: none; } }
 		@media (max-width: 520px) { .table-list.grid-view { grid-template-columns: minmax(0, 1fr); } }
 	</style>
 </head>
@@ -335,7 +398,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		</div>
 	</header>
 	<main>
-		<div id="columnHeader" class="column-header"><span>Name</span><span>Est. rows</span><span>Engine</span><span>Updated</span><span>Data size</span></div>
+		<div id="columnHeader" class="column-header"><span>Name</span><span>Rows</span><span>Updated</span><span>Data size</span></div>
 		<div id="tableList" class="table-list list-view" role="listbox" aria-label="Tables"></div>
 		<div id="status" class="status" role="status" aria-live="polite">Connecting...</div>
 	</main>
@@ -408,8 +471,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			label.textContent = table.name;
 			name.append(icon, label);
 			const details = [
-				['Est. rows', formatNumber(table.rowCount)],
-				['Engine', table.engine || '—'],
+				['Rows', formatNumber(table.rowCount)],
 				['Updated', formatDate(table.updatedAt)],
 				['Data size', formatSize(table.dataSize + table.indexSize)]
 			].map(([labelText, value]) => {
@@ -483,8 +545,8 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		* { box-sizing: border-box; }
 		html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
 		body { display: grid; grid-template-rows: 42px minmax(0, 1fr); padding: 0 4px; }
-		button, select { font: inherit; }
-		header { display: flex; align-items: center; gap: 12px; padding: 0 10px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editorGroupHeader-tabsBackground); }
+		button, select, input { font: inherit; }
+		header { position: relative; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 0 10px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
 		.path { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 		.pagination { display: flex; margin-left: auto; align-items: center; gap: 6px; }
 		.count, .page-status { color: var(--vscode-descriptionForeground); font-size: 12px; white-space: nowrap; }
@@ -492,13 +554,24 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		.icon-button { display: inline-grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 4px; color: var(--vscode-icon-foreground); background: transparent; cursor: pointer; }
 		.icon-button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
 		.icon-button:disabled { opacity: 0.4; cursor: default; }
-		.icon-button:focus-visible, .page-size:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+		.icon-button:focus-visible, .page-size:focus-visible, .column-sort:focus-visible, .column-filter:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 		#content { min-width: 0; overflow: auto; }
 		.status { display: grid; height: 100%; padding: 24px; place-items: center; color: var(--vscode-descriptionForeground); text-align: center; }
 		.error { color: var(--vscode-errorForeground); white-space: pre-wrap; }
 		table { width: max-content; min-width: 100%; border-collapse: collapse; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
 		th, td { max-width: 420px; height: 28px; overflow: hidden; padding: 5px 10px; border-right: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-		th { position: sticky; top: 0; z-index: 1; background: var(--vscode-editorGroupHeader-tabsBackground); font-family: var(--vscode-font-family); font-size: 12px; font-weight: 600; }
+		th { position: sticky; top: 0; z-index: 1; padding: 0; background: var(--vscode-editor-background); font-family: var(--vscode-font-family); font-size: 12px; font-weight: 600; }
+		.column-heading { display: grid; grid-template-columns: minmax(80px, 1fr) auto; align-items: center; min-width: 150px; }
+		.column-sort { display: flex; min-width: 0; height: 28px; padding: 5px 4px 5px 10px; align-items: center; gap: 6px; overflow: hidden; border: 0; color: inherit; background: transparent; cursor: pointer; text-align: left; }
+		.column-sort:hover { color: var(--vscode-textLink-foreground); }
+		.column-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.sort-icon { display: inline-grid; flex: 0 0 auto; grid-template-rows: 6px 6px; gap: 2px; color: var(--vscode-descriptionForeground); }
+		.sort-arrow { width: 0; height: 0; border-right: 4px solid transparent; border-left: 4px solid transparent; opacity: 0.55; }
+		.sort-arrow.up { border-bottom: 6px solid currentColor; }
+		.sort-arrow.down { border-top: 6px solid currentColor; }
+		.sort-arrow.active { color: var(--vscode-foreground); opacity: 1; }
+		.column-filter { grid-column: 1 / -1; width: calc(100% - 12px); height: 24px; margin: 0 6px 5px; padding: 2px 6px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; color: var(--vscode-input-foreground); background: transparent; }
+		.column-filter::placeholder { color: var(--vscode-input-placeholderForeground); }
 		tr:hover td { background: var(--vscode-list-hoverBackground); }
 		.null { color: var(--vscode-descriptionForeground); font-style: italic; }
 		@media (max-width: 620px) { .count { display: none; } header { gap: 6px; padding: 0 4px; } .pagination { gap: 2px; } }
@@ -528,6 +601,9 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		const pageStatus = document.getElementById('pageStatus');
 		let currentPage = 1;
 		let totalPages = 1;
+		let sort;
+		const filters = new Map();
+		let filterTimer;
 		window.addEventListener('message', event => {
 			const message = event.data;
 			if (message.type === 'tableLoading') { pageSize.disabled = true; renderStatus('Loading records...'); }
@@ -540,6 +616,9 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		function renderTable(message) {
 			currentPage = message.page;
 			totalPages = message.totalPages;
+			sort = message.sort;
+			filters.clear();
+			for (const filter of message.filters) filters.set(filter.column, filter.value);
 			pageSize.value = String(message.pageSize);
 			pageSize.disabled = false;
 			count.textContent = message.totalRows.toLocaleString() + (message.totalRows === 1 ? ' row' : ' rows');
@@ -551,7 +630,46 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			const head = table.createTHead().insertRow();
 			for (const column of message.columns) {
 				const cell = document.createElement('th');
-				cell.textContent = column;
+				const heading = document.createElement('div');
+				heading.className = 'column-heading';
+				const sortButton = document.createElement('button');
+				sortButton.className = 'column-sort';
+				sortButton.type = 'button';
+				sortButton.title = 'Sort by ' + column;
+				const columnName = document.createElement('span');
+				columnName.className = 'column-name';
+				columnName.textContent = column;
+				const sortIcon = document.createElement('span');
+				const direction = sort?.column === column ? sort.direction : undefined;
+				sortIcon.className = 'sort-icon';
+				const ascendingIcon = document.createElement('i');
+				ascendingIcon.className = 'sort-arrow up' + (direction === 'asc' ? ' active' : '');
+				const descendingIcon = document.createElement('i');
+				descendingIcon.className = 'sort-arrow down' + (direction === 'desc' ? ' active' : '');
+				sortIcon.append(ascendingIcon, descendingIcon);
+				sortButton.setAttribute('aria-label', 'Sort by ' + column + (direction ? ', currently ' + direction : ''));
+				sortButton.append(columnName, sortIcon);
+				sortButton.addEventListener('click', () => {
+					sort = sort?.column === column && sort.direction === 'asc' ? { column, direction: 'desc' } : { column, direction: 'asc' };
+					loadPage(1);
+				});
+				const filter = document.createElement('input');
+				filter.className = 'column-filter';
+				filter.type = 'search';
+				filter.placeholder = 'Filter';
+				filter.setAttribute('aria-label', 'Filter ' + column);
+				filter.value = filters.get(column) || '';
+				filter.addEventListener('input', () => {
+					if (filter.value) filters.set(column, filter.value);
+					else filters.delete(column);
+					clearTimeout(filterTimer);
+					filterTimer = setTimeout(() => loadPage(1), 350);
+				});
+				filter.addEventListener('keydown', event => {
+					if (event.key === 'Enter') { clearTimeout(filterTimer); loadPage(1); }
+				});
+				heading.append(sortButton, filter);
+				cell.append(heading);
 				head.append(cell);
 			}
 			const body = table.createTBody();
@@ -568,7 +686,13 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		function loadPage(page) {
 			previousPage.disabled = true;
 			nextPage.disabled = true;
-			vscode.postMessage({ type: 'loadPage', page, pageSize: Number(pageSize.value) });
+			vscode.postMessage({
+				type: 'loadPage',
+				page,
+				pageSize: Number(pageSize.value),
+				sort,
+				filters: [...filters].map(([column, value]) => ({ column, value }))
+			});
 		}
 		function renderStatus(message) {
 			const element = document.createElement('div');

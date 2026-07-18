@@ -413,7 +413,6 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 			cursorBlink: true,
 			fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--vscode-editor-font-family'),
 			fontSize: Number(getComputedStyle(document.documentElement).getPropertyValue('--vscode-editor-font-size').replace('px', '')) || 14,
-			overviewRuler: { width: 8 },
 			theme: terminalTheme(),
 			scrollback: 5000
 		});
