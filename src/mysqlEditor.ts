@@ -26,17 +26,18 @@ interface MysqlTableInfo {
 	collation: string;
 }
 
-export function openMysqlEditor(extensionUri: vscode.Uri, server: MysqlServer, password: string): void {
-	const panel = vscode.window.createWebviewPanel(
-		'server-hub.mysqlEditor',
-		server.name,
-		vscode.ViewColumn.Active,
-		{
-			enableScripts: true,
-			retainContextWhenHidden: true,
-			localResourceRoots: [codiconsDistUri(extensionUri)],
-		},
-	);
+export function configureMysqlEditor(
+	extensionUri: vscode.Uri,
+	panel: vscode.WebviewPanel,
+	server: MysqlServer,
+	password: string,
+	openTable: (database: string, table: string) => void,
+): void {
+	panel.title = server.name;
+	panel.webview.options = {
+		enableScripts: true,
+		localResourceRoots: [codiconsDistUri(extensionUri)],
+	};
 	panel.iconPath = new vscode.ThemeIcon('database');
 	panel.webview.html = renderMysqlOverview(panel.webview, extensionUri, server);
 
@@ -70,7 +71,7 @@ export function openMysqlEditor(extensionUri: vscode.Uri, server: MysqlServer, p
 			&& message.database === currentDatabase
 			&& tables.has(message.table)
 		) {
-			openMysqlTablePreview(extensionUri, server, password, currentDatabase, message.table);
+			openTable(currentDatabase, message.table);
 		}
 	});
 
@@ -136,23 +137,19 @@ export function openMysqlEditor(extensionUri: vscode.Uri, server: MysqlServer, p
 	}
 }
 
-function openMysqlTablePreview(
+export function configureMysqlTablePreview(
 	extensionUri: vscode.Uri,
+	panel: vscode.WebviewPanel,
 	server: MysqlServer,
 	password: string,
 	database: string,
 	table: string,
 ): void {
-	const panel = vscode.window.createWebviewPanel(
-		'server-hub.mysqlTablePreview',
-		`${table} - ${database}`,
-		vscode.ViewColumn.Active,
-		{
-			enableScripts: true,
-			retainContextWhenHidden: true,
-			localResourceRoots: [codiconsDistUri(extensionUri)],
-		},
-	);
+	panel.title = `${table} - ${database}`;
+	panel.webview.options = {
+		enableScripts: true,
+		localResourceRoots: [codiconsDistUri(extensionUri)],
+	};
 	panel.iconPath = new vscode.ThemeIcon('table');
 	panel.webview.html = renderTablePreview(panel.webview, extensionUri, database, table);
 

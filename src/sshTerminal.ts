@@ -19,19 +19,19 @@ export function toggleSftpForActiveTerminal(): void {
 	activeSshSession?.toggleSftp();
 }
 
-export function openSshTerminal(extensionUri: vscode.Uri, server: SshServer, password: string): void {
+export function configureSshTerminal(
+	extensionUri: vscode.Uri,
+	panel: vscode.WebviewPanel,
+	server: SshServer,
+	password: string,
+): void {
 	const resourcesRoot = vscode.Uri.joinPath(extensionUri, 'resources');
 	const xtermRoot = vscode.Uri.joinPath(resourcesRoot, 'xterm');
-	const panel = vscode.window.createWebviewPanel(
-		'server-hub.sshTerminal',
-		server.name,
-		vscode.ViewColumn.Active,
-		{
-			enableScripts: true,
-			retainContextWhenHidden: true,
-			localResourceRoots: [resourcesRoot, codiconsDistUri(extensionUri)],
-		},
-	);
+	panel.title = server.name;
+	panel.webview.options = {
+		enableScripts: true,
+		localResourceRoots: [resourcesRoot, codiconsDistUri(extensionUri)],
+	};
 	panel.iconPath = new vscode.ThemeIcon('terminal-linux');
 	panel.webview.html = renderSshTerminal(panel.webview, extensionUri, xtermRoot, server);
 

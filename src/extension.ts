@@ -1,11 +1,10 @@
 import * as vscode from 'vscode';
-import { openMysqlEditor } from './mysqlEditor';
 import { Server, ServerType } from './server';
-import { openServerForm } from './serverForm';
+import { openServerConnection, openServerForm, registerServerHubEditor } from './serverHubEditor';
 import { ServerStore } from './serverStore';
 import { exportServers, importServers } from './serverTransfer';
 import { ServerTreeDataProvider, ServerTreeItem } from './serverTree';
-import { openSshTerminal, toggleSftpForActiveTerminal } from './sshTerminal';
+import { toggleSftpForActiveTerminal } from './sshTerminal';
 
 export function activate(context: vscode.ExtensionContext): void {
 	const serverStore = new ServerStore(context);
@@ -13,10 +12,11 @@ export function activate(context: vscode.ExtensionContext): void {
 	serverStore.enableSettingsSync();
 
 	context.subscriptions.push(
+		registerServerHubEditor(context, serverStore, treeDataProvider),
 		vscode.window.registerTreeDataProvider('server-hub.servers', treeDataProvider),
 		vscode.commands.registerCommand(
 			'server-hub.addServer',
-			() => selectAndAddServer(context, serverStore, treeDataProvider),
+			() => selectAndAddServer(),
 		),
 		vscode.commands.registerCommand(
 			'server-hub.importServers',
@@ -28,7 +28,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		),
 		vscode.commands.registerCommand(
 			'server-hub.connectServer',
-			(item: ServerTreeItem) => connectToServer(context, serverStore, item.server),
+			(item: ServerTreeItem) => openServerConnection(item.server),
 		),
 		vscode.commands.registerCommand(
 			'server-hub.copyHost',
@@ -36,7 +36,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		),
 		vscode.commands.registerCommand(
 			'server-hub.editServer',
-			(item: ServerTreeItem) => openServerForm(context, serverStore, treeDataProvider, item.server.type, item.server),
+			(item: ServerTreeItem) => openServerForm(item.server.type, item.server),
 		),
 		vscode.commands.registerCommand(
 			'server-hub.deleteServer',
@@ -46,37 +46,14 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 }
 
-async function selectAndAddServer(
-	context: vscode.ExtensionContext,
-	serverStore: ServerStore,
-	treeDataProvider: ServerTreeDataProvider,
-): Promise<void> {
+async function selectAndAddServer(): Promise<void> {
 	const selection = await vscode.window.showQuickPick<{ label: string; description: string; type: ServerType }>([
 		{ label: 'SSH', description: 'Interactive remote terminal', type: 'ssh' },
 		{ label: 'MySQL', description: 'Browse tables and preview data', type: 'mysql' },
 	], { title: 'Add Server', placeHolder: 'Select a server type' });
 	if (selection) {
-		openServerForm(context, serverStore, treeDataProvider, selection.type);
+		await openServerForm(selection.type);
 	}
-}
-
-async function connectToServer(
-	context: vscode.ExtensionContext,
-	serverStore: ServerStore,
-	server: Server,
-): Promise<void> {
-	const password = await serverStore.getPassword(server.id);
-	if (!password) {
-		void vscode.window.showErrorMessage(`No password is available for “${server.name}” on this device.`);
-		return;
-	}
-
-	if (server.type === 'ssh') {
-		openSshTerminal(context.extensionUri, server, password);
-		return;
-	}
-
-	openMysqlEditor(context.extensionUri, server, password);
 }
 
 async function confirmAndDeleteServer(

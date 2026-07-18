@@ -3,8 +3,9 @@ import { normalizePassword, parseServerForm, Server, ServerFormMessage, ServerTy
 import { ServerStore } from './serverStore';
 import { ServerTreeDataProvider } from './serverTree';
 
-export function openServerForm(
+export function configureServerForm(
 	context: vscode.ExtensionContext,
+	panel: vscode.WebviewPanel,
 	serverStore: ServerStore,
 	treeDataProvider: ServerTreeDataProvider,
 	serverType: ServerType,
@@ -12,12 +13,8 @@ export function openServerForm(
 ): void {
 	const isEditing = existingServer !== undefined;
 	const typeLabel = serverType === 'mysql' ? 'MySQL' : 'SSH';
-	const panel = vscode.window.createWebviewPanel(
-		'server-hub.serverForm',
-		`${isEditing ? 'Edit' : 'Add'} ${typeLabel} Server`,
-		vscode.ViewColumn.Active,
-		{ enableScripts: true },
-	);
+	panel.title = `${isEditing ? 'Edit' : 'Add'} ${typeLabel} Server`;
+	panel.webview.options = { enableScripts: true };
 
 	panel.webview.html = renderServerForm(panel.webview, serverType, existingServer);
 	panel.webview.onDidReceiveMessage(async (message: ServerFormMessage) => {
