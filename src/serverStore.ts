@@ -10,6 +10,11 @@ export class ServerStore {
 		return parseStoredServers(this.context.globalState.get<unknown>(serversStateKey, []));
 	}
 
+	getGroups(): string[] {
+		return [...new Set(this.getServers().map(server => server.group).filter(Boolean))]
+			.sort((left, right) => left.localeCompare(right));
+	}
+
 	async saveServer(server: Server, password?: string): Promise<void> {
 		const servers = this.getServers();
 		const exists = servers.some(current => current.id === server.id);

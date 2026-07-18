@@ -70,7 +70,9 @@ async function selectAndAddServer(): Promise<void> {
 }
 
 function getSelectedServers(item: ServerTreeItem, selectedItems?: ServerTreeItem[]): Server[] {
-	return (selectedItems?.length ? selectedItems : [item]).map(selectedItem => selectedItem.server);
+	return (selectedItems?.length ? selectedItems : [item])
+		.filter(selectedItem => selectedItem instanceof ServerTreeItem)
+		.map(selectedItem => selectedItem.server);
 }
 
 async function confirmAndDeleteServers(

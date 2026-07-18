@@ -1,8 +1,8 @@
 {
   "name": "server-hub",
   "displayName": "Server Hub",
-  "description": "Manage and connect to servers from VS Code.",
-  "version": "0.1.1",
+  "description": "Manage and connect to ssh mysql server and more..",
+  "version": "0.1.2",
   "engines": {
     "vscode": "^1.125.0"
   },

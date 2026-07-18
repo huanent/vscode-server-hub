@@ -4,6 +4,7 @@ export interface BaseServer {
 	id: string;
 	type: ServerType;
 	name: string;
+	group: string;
 	host: string;
 	port: number;
 	username: string;
@@ -30,6 +31,7 @@ export interface ServerExportFile {
 export interface ServerFormMessage {
 	type: 'save';
 	name?: unknown;
+	group?: unknown;
 	host?: unknown;
 	port?: unknown;
 	username?: unknown;
@@ -43,6 +45,7 @@ export function parseServerForm(
 	serverId?: string,
 ): Server | undefined {
 	const name = normalizeString(message.name);
+	const group = normalizeString(message.group);
 	const host = normalizeString(message.host);
 	const username = normalizeString(message.username);
 	const port = Number(message.port);
@@ -53,6 +56,7 @@ export function parseServerForm(
 	const baseServer = {
 		id: serverId ?? crypto.randomUUID(),
 		name,
+		group,
 		host,
 		port,
 		username,
@@ -126,6 +130,7 @@ function parseServer(value: unknown, requireType: boolean): Server {
 	const server = parseServerForm({
 		type: 'save',
 		name: value.name,
+		group: value.group,
 		host: value.host,
 		port: value.port,
 		username: value.username,
