@@ -288,7 +288,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.separator { color: var(--vscode-breadcrumb-foreground); font-size: 14px; }
 		#databaseSelect { min-width: 120px; max-width: 280px; height: 26px; padding: 2px 24px 2px 7px; border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: 4px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); }
 		main { height: calc(100% - 46px); overflow: auto; }
-		.column-header, .table-list.list-view .table-entry { display: grid; grid-template-columns: minmax(190px, 1fr) 110px 110px 130px minmax(160px, 210px); align-items: center; }
+		.column-header, .table-list.list-view .table-entry { display: grid; grid-template-columns: minmax(190px, 1fr) 110px 110px minmax(160px, 210px) 130px; align-items: center; }
 		.column-header { position: sticky; top: 0; z-index: 2; height: 30px; padding: 0 14px 0 20px; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); background: var(--vscode-editor-background); font-size: 12px; }
 		.column-header[hidden] { display: none; }
 		.column-header span:not(:first-child) { text-align: right; }
@@ -302,23 +302,23 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.entry-name span:last-child, .entry-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 		.entry-meta { padding-left: 12px; color: var(--vscode-descriptionForeground); font-size: 12px; text-align: right; }
 		.selected .entry-meta { color: inherit; }
-		.table-list.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); grid-auto-rows: 132px; gap: 10px; padding: 14px 8px; }
+		.table-list.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); grid-auto-rows: 154px; gap: 10px; padding: 14px 8px; }
 		.table-list.grid-view .table-entry { display: grid; grid-template-rows: 24px minmax(0, 1fr); gap: 12px; min-width: 0; height: 100%; padding: 14px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; }
 		.table-list.grid-view .table-entry:hover { border-color: var(--vscode-focusBorder); }
 		.table-list.grid-view .entry-name { align-items: center; font-weight: 600; }
 		.table-list.grid-view .table-icon { font-size: 22px; }
-		.grid-details { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; }
-		.grid-detail { min-width: 0; }
-		.grid-label { display: block; margin-bottom: 2px; color: var(--vscode-descriptionForeground); font-size: 11px; }
+		.grid-details { display: grid; gap: 7px 12px; }
+		.grid-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); min-width: 0; gap: 12px; }
+		.grid-label { display: block; color: var(--vscode-descriptionForeground); font-size: 11px; }
 		.grid-value { display: block; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-		.table-list.grid-view .grid-details { align-content: start; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-		.table-list.grid-view .entry-meta { padding-left: 0; text-align: left; }
+		.table-list.grid-view .grid-details { align-content: start; }
+		.table-list.grid-view .entry-meta { padding-left: 0; text-align: right; }
 		.table-list.list-view .grid-details { display: contents; }
 		.table-list.list-view .grid-detail { display: contents; }
 		.table-list.list-view .grid-label { display: none; }
 		.status { padding: 44px 0; color: var(--vscode-descriptionForeground); text-align: center; }
 		.error { color: var(--vscode-errorForeground); }
-		@media (max-width: 760px) { .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px; } .column-header span:nth-child(3), .column-header span:nth-child(5), .table-list.list-view .grid-detail:nth-child(2), .table-list.list-view .grid-detail:nth-child(4) { display: none; } .connection-name { display: none; } }
+		@media (max-width: 760px) { .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px; } .column-header span:nth-child(3), .column-header span:nth-child(4), .table-list.list-view .grid-detail:nth-child(2), .table-list.list-view .grid-detail:nth-child(3) { display: none; } .connection-name { display: none; } }
 		@media (max-width: 520px) { .table-list.grid-view { grid-template-columns: minmax(0, 1fr); } }
 	</style>
 </head>
@@ -338,7 +338,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		</div>
 	</header>
 	<main>
-		<div id="columnHeader" class="column-header"><span>Name</span><span>Est. rows</span><span>Engine</span><span>Data size</span><span>Updated</span></div>
+		<div id="columnHeader" class="column-header"><span>Name</span><span>Est. rows</span><span>Engine</span><span>Updated</span><span>Data size</span></div>
 		<div id="tableList" class="table-list list-view" role="listbox" aria-label="Tables"></div>
 		<div id="status" class="status" role="status" aria-live="polite">Connecting...</div>
 	</main>
@@ -413,8 +413,8 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			const details = [
 				['Est. rows', formatNumber(table.rowCount)],
 				['Engine', table.engine || '—'],
-				['Data size', formatSize(table.dataSize + table.indexSize)],
-				['Updated', formatDate(table.updatedAt)]
+				['Updated', formatDate(table.updatedAt)],
+				['Data size', formatSize(table.dataSize + table.indexSize)]
 			].map(([labelText, value]) => {
 				const detail = document.createElement('span');
 				detail.className = 'grid-detail';

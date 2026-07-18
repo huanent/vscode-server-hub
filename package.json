@@ -59,6 +59,11 @@
         "icon": "$(run-compact)"
       },
       {
+        "command": "server-hub.copyHost",
+        "title": "Copy Host",
+        "icon": "$(copy)"
+      },
+      {
         "command": "server-hub.editServer",
         "title": "Edit Server",
         "icon": "$(edit)"
@@ -97,6 +102,11 @@
           "command": "server-hub.editServer",
           "when": "view == server-hub.servers && (viewItem == sshServer || viewItem == mysqlServer)",
           "group": "1_modification"
+        },
+        {
+          "command": "server-hub.copyHost",
+          "when": "view == server-hub.servers && (viewItem == sshServer || viewItem == mysqlServer)",
+          "group": "1_modification@2"
         },
         {
           "command": "server-hub.deleteServer",

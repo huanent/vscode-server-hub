@@ -39,7 +39,7 @@ class SshTerminalPseudoterminal implements vscode.Pseudoterminal {
 
 	open(initialDimensions: vscode.TerminalDimensions | undefined): void {
 		this.dimensions = initialDimensions;
-		this.writeEmitter.fire(`Connecting to ${this.server.username}@${this.server.host}:${this.server.port}...\r\n`);
+		this.writeEmitter.fire(`Connecting to ${this.server.username}@${this.server.host}:${this.server.port}...`);
 
 		const client = new Client();
 		this.client = client;
@@ -76,7 +76,9 @@ class SshTerminalPseudoterminal implements vscode.Pseudoterminal {
 	setDimensions(dimensions: vscode.TerminalDimensions): void {
 		this.dimensions = dimensions;
 		this.shellStream?.setWindow(dimensions.rows, dimensions.columns, 0, 0);
-		this.configureTerminalViewport();
+		if (this.shellStream) {
+			this.configureTerminalViewport();
+		}
 	}
 
 	private openRemoteShell(client: Client): void {
@@ -87,10 +89,11 @@ class SshTerminalPseudoterminal implements vscode.Pseudoterminal {
 			}
 
 			this.shellStream = stream;
+			this.writeEmitter.fire('\r\u001b[2K');
+			this.configureTerminalViewport(true);
 			stream.on('data', (data: Buffer) => this.writeEmitter.fire(data.toString()));
 			stream.stderr.on('data', (data: Buffer) => this.writeEmitter.fire(data.toString()));
 			stream.on('close', () => this.handleShellClosed());
-			this.configureTerminalViewport();
 			this.startMetricsPolling(client);
 		});
 	}
@@ -106,12 +109,12 @@ class SshTerminalPseudoterminal implements vscode.Pseudoterminal {
 		};
 	}
 
-	private configureTerminalViewport(): void {
+	private configureTerminalViewport(forceClear = false): void {
 		if (!this.dimensions) {
 			return;
 		}
 
-		const clearScreen = this.viewportInitialized ? '' : '\u001b[2J';
+		const clearScreen = !this.viewportInitialized || forceClear ? '\u001b[2J' : '';
 		this.viewportInitialized = true;
 		this.writeEmitter.fire(`\u001b[r${clearScreen}\u001b[H${this.buildStatusLine('Loading metrics...')}\u001b[2;${this.dimensions.rows}r\u001b[2;1H`);
 	}

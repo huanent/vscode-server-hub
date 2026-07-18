@@ -31,6 +31,10 @@ export function activate(context: vscode.ExtensionContext): void {
 			(item: ServerTreeItem) => connectToServer(context, serverStore, item.server),
 		),
 		vscode.commands.registerCommand(
+			'server-hub.copyHost',
+			(item: ServerTreeItem) => vscode.env.clipboard.writeText(item.server.host),
+		),
+		vscode.commands.registerCommand(
 			'server-hub.editServer',
 			(item: ServerTreeItem) => openServerForm(context, serverStore, treeDataProvider, item.server.type, item.server),
 		),
