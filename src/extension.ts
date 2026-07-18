@@ -28,7 +28,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		),
 		vscode.commands.registerCommand(
 			'server-hub.connectServer',
-			(item: ServerTreeItem) => connectToServer(serverStore, item.server),
+			(item: ServerTreeItem) => connectToServer(context, serverStore, item.server),
 		),
 		vscode.commands.registerCommand(
 			'server-hub.editServer',
@@ -55,7 +55,11 @@ async function selectAndAddServer(
 	}
 }
 
-async function connectToServer(serverStore: ServerStore, server: Server): Promise<void> {
+async function connectToServer(
+	context: vscode.ExtensionContext,
+	serverStore: ServerStore,
+	server: Server,
+): Promise<void> {
 	const password = await serverStore.getPassword(server.id);
 	if (!password) {
 		void vscode.window.showErrorMessage(`No password is available for “${server.name}” on this device.`);
@@ -67,7 +71,7 @@ async function connectToServer(serverStore: ServerStore, server: Server): Promis
 		return;
 	}
 
-	openMysqlEditor(server, password);
+	openMysqlEditor(context.extensionUri, server, password);
 }
 
 async function confirmAndDeleteServer(

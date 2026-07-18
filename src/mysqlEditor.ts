@@ -8,6 +8,14 @@ interface MysqlEditorMessage {
 	table?: unknown;
 }
 
+interface MysqlTablePreviewMessage {
+	type: 'loadPage';
+	page?: unknown;
+	pageSize?: unknown;
+}
+
+const tablePageSizes = new Set([50, 100, 300, 500, 1000]);
+
 interface MysqlTableInfo {
 	name: string;
 	engine: string;
@@ -18,15 +26,19 @@ interface MysqlTableInfo {
 	collation: string;
 }
 
-export function openMysqlEditor(server: MysqlServer, password: string): void {
+export function openMysqlEditor(extensionUri: vscode.Uri, server: MysqlServer, password: string): void {
 	const panel = vscode.window.createWebviewPanel(
 		'server-hub.mysqlEditor',
 		server.name,
 		vscode.ViewColumn.Active,
-		{ enableScripts: true, retainContextWhenHidden: true },
+		{
+			enableScripts: true,
+			retainContextWhenHidden: true,
+			localResourceRoots: [codiconsDistUri(extensionUri)],
+		},
 	);
 	panel.iconPath = new vscode.ThemeIcon('database');
-	panel.webview.html = renderMysqlOverview(panel.webview, server);
+	panel.webview.html = renderMysqlOverview(panel.webview, extensionUri, server);
 
 	let connection: Connection | undefined;
 	let databases = new Set<string>();
@@ -58,7 +70,7 @@ export function openMysqlEditor(server: MysqlServer, password: string): void {
 			&& message.database === currentDatabase
 			&& tables.has(message.table)
 		) {
-			openMysqlTablePreview(server, password, currentDatabase, message.table);
+			openMysqlTablePreview(extensionUri, server, password, currentDatabase, message.table);
 		}
 	});
 
@@ -124,36 +136,81 @@ export function openMysqlEditor(server: MysqlServer, password: string): void {
 	}
 }
 
-function openMysqlTablePreview(server: MysqlServer, password: string, database: string, table: string): void {
+function openMysqlTablePreview(
+	extensionUri: vscode.Uri,
+	server: MysqlServer,
+	password: string,
+	database: string,
+	table: string,
+): void {
 	const panel = vscode.window.createWebviewPanel(
 		'server-hub.mysqlTablePreview',
 		`${table} - ${database}`,
 		vscode.ViewColumn.Active,
-		{ enableScripts: true, retainContextWhenHidden: true },
+		{
+			enableScripts: true,
+			retainContextWhenHidden: true,
+			localResourceRoots: [codiconsDistUri(extensionUri)],
+		},
 	);
 	panel.iconPath = new vscode.ThemeIcon('table');
-	panel.webview.html = renderTablePreview(panel.webview, database, table);
+	panel.webview.html = renderTablePreview(panel.webview, extensionUri, database, table);
 
 	let connection: Connection | undefined;
 	let disposed = false;
+	let totalRows = 0;
 	panel.onDidDispose(() => {
 		disposed = true;
 		void connection?.end();
 	});
-	void loadPreview();
+	panel.webview.onDidReceiveMessage(async (message: MysqlTablePreviewMessage) => {
+		if (
+			message.type !== 'loadPage'
+			|| typeof message.page !== 'number'
+			|| !Number.isInteger(message.page)
+			|| message.page < 1
+			|| typeof message.pageSize !== 'number'
+			|| !tablePageSizes.has(message.pageSize)
+		) {
+			return;
+		}
+		await loadPage(message.page, message.pageSize);
+	});
+	void connectAndLoad();
 
-	async function loadPreview(): Promise<void> {
+	async function connectAndLoad(): Promise<void> {
 		try {
 			connection = await createMysqlConnection(server, password, database);
 			if (disposed) {
 				await connection.end();
 				return;
 			}
-			const [rows, fields] = await connection.query<RowDataPacket[]>('SELECT * FROM ??.?? LIMIT 100', [database, table]);
+			const [countRows] = await connection.query<RowDataPacket[]>('SELECT COUNT(*) AS total FROM ??.??', [database, table]);
+			totalRows = Number(countRows[0]?.total) || 0;
+			await loadPage(1, 100);
+		} catch (error) {
+			void panel.webview.postMessage({ type: 'tableError', message: errorMessage(error) });
+		}
+	}
+
+	async function loadPage(page: number, pageSize: number): Promise<void> {
+		if (!connection) {
+			return;
+		}
+		const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+		const currentPage = Math.min(page, totalPages);
+		void panel.webview.postMessage({ type: 'tableLoading' });
+		try {
+			const offset = (currentPage - 1) * pageSize;
+			const [rows, fields] = await connection.query<RowDataPacket[]>('SELECT * FROM ??.?? LIMIT ? OFFSET ?', [database, table, pageSize, offset]);
 			void panel.webview.postMessage({
 				type: 'tableData',
 				columns: fields.map((field: FieldPacket) => field.name),
 				rows: rows.map(row => fields.map((field: FieldPacket) => displayValue(row[field.name]))),
+				page: currentPage,
+				pageSize,
+				totalRows,
+				totalPages,
 			});
 		} catch (error) {
 			void panel.webview.postMessage({ type: 'tableError', message: errorMessage(error) });
@@ -200,14 +257,16 @@ function displayValue(value: unknown): string | null {
 	return String(value);
 }
 
-function renderMysqlOverview(webview: vscode.Webview, server: MysqlServer): string {
+function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, server: MysqlServer): string {
 	const nonce = crypto.randomUUID().replaceAll('-', '');
+	const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(codiconsDistUri(extensionUri), 'codicon.css'));
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; font-src ${webview.cspSource}; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+	<link rel="stylesheet" href="${codiconsUri}">
 	<title>${escapeHtml(server.name)}</title>
 	<style>
 		:root { color-scheme: light dark; }
@@ -221,14 +280,17 @@ function renderMysqlOverview(webview: vscode.Webview, server: MysqlServer): stri
 		.icon-button { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; color: var(--vscode-icon-foreground); background: transparent; cursor: pointer; }
 		.icon-button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
 		.icon-button.selected { background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground)); }
+		.icon-button:disabled { opacity: 0.4; cursor: default; }
+		.icon-button .codicon { font-size: 16px; }
 		.icon-button:focus-visible, select:focus-visible, .table-entry:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 		.database-path { display: flex; min-width: 0; align-items: center; gap: 8px; }
 		.connection-name { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--vscode-breadcrumb-foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-		.separator { color: var(--vscode-breadcrumb-foreground); }
-		#databaseSelect { min-width: 120px; max-width: 280px; height: 26px; padding: 2px 24px 2px 7px; border: 1px solid var(--vscode-dropdown-border, transparent); color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); }
+		.separator { color: var(--vscode-breadcrumb-foreground); font-size: 14px; }
+		#databaseSelect { min-width: 120px; max-width: 280px; height: 26px; padding: 2px 24px 2px 7px; border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: 4px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); }
 		main { height: calc(100% - 46px); overflow: auto; }
 		.column-header, .table-list.list-view .table-entry { display: grid; grid-template-columns: minmax(190px, 1fr) 110px 110px 130px minmax(160px, 210px); align-items: center; }
 		.column-header { position: sticky; top: 0; z-index: 2; height: 30px; padding: 0 14px 0 20px; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); background: var(--vscode-editor-background); font-size: 12px; }
+		.column-header[hidden] { display: none; }
 		.column-header span:not(:first-child) { text-align: right; }
 		.table-list.list-view { padding: 4px 8px 12px; }
 		.table-list.list-view .table-entry { min-height: 32px; padding: 0 6px 0 10px; border-radius: 3px; }
@@ -240,36 +302,39 @@ function renderMysqlOverview(webview: vscode.Webview, server: MysqlServer): stri
 		.entry-name span:last-child, .entry-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 		.entry-meta { padding-left: 12px; color: var(--vscode-descriptionForeground); font-size: 12px; text-align: right; }
 		.selected .entry-meta { color: inherit; }
-		.table-list.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; padding: 14px 8px; }
-		.table-list.grid-view .table-entry { display: grid; grid-template-rows: auto auto; gap: 12px; min-width: 0; min-height: 116px; padding: 14px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; }
+		.table-list.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); grid-auto-rows: 132px; gap: 10px; padding: 14px 8px; }
+		.table-list.grid-view .table-entry { display: grid; grid-template-rows: 24px minmax(0, 1fr); gap: 12px; min-width: 0; height: 100%; padding: 14px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; }
 		.table-list.grid-view .table-entry:hover { border-color: var(--vscode-focusBorder); }
-		.table-list.grid-view .entry-name { align-items: flex-start; font-weight: 600; }
+		.table-list.grid-view .entry-name { align-items: center; font-weight: 600; }
 		.table-list.grid-view .table-icon { font-size: 22px; }
 		.grid-details { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 12px; }
 		.grid-detail { min-width: 0; }
 		.grid-label { display: block; margin-bottom: 2px; color: var(--vscode-descriptionForeground); font-size: 11px; }
 		.grid-value { display: block; overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+		.table-list.grid-view .grid-details { align-content: start; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+		.table-list.grid-view .entry-meta { padding-left: 0; text-align: left; }
 		.table-list.list-view .grid-details { display: contents; }
 		.table-list.list-view .grid-detail { display: contents; }
 		.table-list.list-view .grid-label { display: none; }
 		.status { padding: 44px 0; color: var(--vscode-descriptionForeground); text-align: center; }
 		.error { color: var(--vscode-errorForeground); }
 		@media (max-width: 760px) { .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px; } .column-header span:nth-child(3), .column-header span:nth-child(5), .table-list.list-view .grid-detail:nth-child(2), .table-list.list-view .grid-detail:nth-child(4) { display: none; } .connection-name { display: none; } }
+		@media (max-width: 520px) { .table-list.grid-view { grid-template-columns: minmax(0, 1fr); } }
 	</style>
 </head>
 <body>
 	<header class="toolbar">
 		<div class="primary-actions" role="toolbar" aria-label="Database actions">
-			<button id="refreshButton" class="icon-button" type="button" title="Refresh tables" aria-label="Refresh tables">↻</button>
+			<button id="refreshButton" class="icon-button" type="button" title="Refresh tables" aria-label="Refresh tables"><i class="codicon codicon-refresh"></i></button>
 		</div>
 		<div class="database-path">
 			<span class="connection-name" title="${escapeHtml(`${server.username}@${server.host}:${server.port}`)}">${escapeHtml(server.name)}</span>
-			<span class="separator">›</span>
+			<i class="codicon codicon-chevron-right separator" aria-hidden="true"></i>
 			<select id="databaseSelect" aria-label="Database" disabled><option>Connecting...</option></select>
 		</div>
 		<div class="view-actions" role="group" aria-label="View">
-			<button id="listViewButton" class="icon-button selected" type="button" title="List view" aria-label="List view" aria-pressed="true">☷</button>
-			<button id="gridViewButton" class="icon-button" type="button" title="Grid view" aria-label="Grid view" aria-pressed="false">▦</button>
+			<button id="listViewButton" class="icon-button selected" type="button" title="List view" aria-label="List view" aria-pressed="true"><i class="codicon codicon-list-unordered"></i></button>
+			<button id="gridViewButton" class="icon-button" type="button" title="Grid view" aria-label="Grid view" aria-pressed="false"><i class="codicon codicon-layout"></i></button>
 		</div>
 	</header>
 	<main>
@@ -341,8 +406,7 @@ function renderMysqlOverview(webview: vscode.Webview, server: MysqlServer): stri
 			const name = document.createElement('div');
 			name.className = 'entry-name';
 			const icon = document.createElement('span');
-			icon.className = 'table-icon';
-			icon.textContent = '▤';
+			icon.className = 'table-icon codicon codicon-table';
 			const label = document.createElement('span');
 			label.textContent = table.name;
 			name.append(icon, label);
@@ -406,23 +470,32 @@ function renderMysqlOverview(webview: vscode.Webview, server: MysqlServer): stri
 </html>`;
 }
 
-function renderTablePreview(webview: vscode.Webview, database: string, table: string): string {
+function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, database: string, table: string): string {
 	const nonce = crypto.randomUUID().replaceAll('-', '');
+	const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(codiconsDistUri(extensionUri), 'codicon.css'));
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; font-src ${webview.cspSource}; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
+	<link rel="stylesheet" href="${codiconsUri}">
 	<title>${escapeHtml(table)}</title>
 	<style>
 		:root { color-scheme: light dark; }
 		* { box-sizing: border-box; }
 		html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
-		body { display: grid; grid-template-rows: 42px minmax(0, 1fr); }
-		header { display: flex; align-items: center; gap: 8px; padding: 0 14px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editorGroupHeader-tabsBackground); }
+		body { display: grid; grid-template-rows: 42px minmax(0, 1fr); padding: 0 4px; }
+		button, select { font: inherit; }
+		header { display: flex; align-items: center; gap: 12px; padding: 0 10px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editorGroupHeader-tabsBackground); }
 		.path { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-		.count { margin-left: auto; color: var(--vscode-descriptionForeground); font-size: 12px; white-space: nowrap; }
+		.pagination { display: flex; margin-left: auto; align-items: center; gap: 6px; }
+		.count, .page-status { color: var(--vscode-descriptionForeground); font-size: 12px; white-space: nowrap; }
+		.page-size { height: 26px; padding: 2px 22px 2px 7px; border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: 4px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); }
+		.icon-button { display: inline-grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 4px; color: var(--vscode-icon-foreground); background: transparent; cursor: pointer; }
+		.icon-button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
+		.icon-button:disabled { opacity: 0.4; cursor: default; }
+		.icon-button:focus-visible, .page-size:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 		#content { min-width: 0; overflow: auto; }
 		.status { display: grid; height: 100%; padding: 24px; place-items: center; color: var(--vscode-descriptionForeground); text-align: center; }
 		.error { color: var(--vscode-errorForeground); white-space: pre-wrap; }
@@ -431,21 +504,51 @@ function renderTablePreview(webview: vscode.Webview, database: string, table: st
 		th { position: sticky; top: 0; z-index: 1; background: var(--vscode-editorGroupHeader-tabsBackground); font-family: var(--vscode-font-family); font-size: 12px; font-weight: 600; }
 		tr:hover td { background: var(--vscode-list-hoverBackground); }
 		.null { color: var(--vscode-descriptionForeground); font-style: italic; }
+		@media (max-width: 620px) { .count { display: none; } header { gap: 6px; padding: 0 4px; } .pagination { gap: 2px; } }
 	</style>
 </head>
 <body>
-	<header><span class="path">${escapeHtml(database)} › ${escapeHtml(table)}</span><span id="count" class="count">First 100 rows</span></header>
+	<header>
+		<span class="path">${escapeHtml(database)} › ${escapeHtml(table)}</span>
+		<nav class="pagination" aria-label="Table pagination">
+			<span id="count" class="count">Loading...</span>
+			<select id="pageSize" class="page-size" aria-label="Rows per page">
+				<option value="50">50</option><option value="100" selected>100</option><option value="300">300</option><option value="500">500</option><option value="1000">1000</option>
+			</select>
+			<button id="previousPage" class="icon-button" type="button" title="Previous page" aria-label="Previous page" disabled><i class="codicon codicon-chevron-left"></i></button>
+			<span id="pageStatus" class="page-status">1 / 1</span>
+			<button id="nextPage" class="icon-button" type="button" title="Next page" aria-label="Next page" disabled><i class="codicon codicon-chevron-right"></i></button>
+		</nav>
+	</header>
 	<div id="content"><div class="status">Loading records...</div></div>
 	<script nonce="${nonce}">
+		const vscode = acquireVsCodeApi();
 		const content = document.getElementById('content');
 		const count = document.getElementById('count');
+		const pageSize = document.getElementById('pageSize');
+		const previousPage = document.getElementById('previousPage');
+		const nextPage = document.getElementById('nextPage');
+		const pageStatus = document.getElementById('pageStatus');
+		let currentPage = 1;
+		let totalPages = 1;
 		window.addEventListener('message', event => {
 			const message = event.data;
+			if (message.type === 'tableLoading') { pageSize.disabled = true; renderStatus('Loading records...'); }
 			if (message.type === 'tableData') renderTable(message);
 			if (message.type === 'tableError') renderError(message.message);
 		});
+		pageSize.addEventListener('change', () => loadPage(1));
+		previousPage.addEventListener('click', () => loadPage(currentPage - 1));
+		nextPage.addEventListener('click', () => loadPage(currentPage + 1));
 		function renderTable(message) {
-			count.textContent = message.rows.length + (message.rows.length === 1 ? ' row' : ' rows') + ' · limit 100';
+			currentPage = message.page;
+			totalPages = message.totalPages;
+			pageSize.value = String(message.pageSize);
+			pageSize.disabled = false;
+			count.textContent = message.totalRows.toLocaleString() + (message.totalRows === 1 ? ' row' : ' rows');
+			pageStatus.textContent = currentPage.toLocaleString() + ' / ' + totalPages.toLocaleString();
+			previousPage.disabled = currentPage <= 1;
+			nextPage.disabled = currentPage >= totalPages;
 			if (message.columns.length === 0) { renderStatus('No columns'); return; }
 			const table = document.createElement('table');
 			const head = table.createTHead().insertRow();
@@ -465,6 +568,11 @@ function renderTablePreview(webview: vscode.Webview, database: string, table: st
 			}
 			content.replaceChildren(table);
 		}
+		function loadPage(page) {
+			previousPage.disabled = true;
+			nextPage.disabled = true;
+			vscode.postMessage({ type: 'loadPage', page, pageSize: Number(pageSize.value) });
+		}
 		function renderStatus(message) {
 			const element = document.createElement('div');
 			element.className = 'status';
@@ -477,10 +585,17 @@ function renderTablePreview(webview: vscode.Webview, database: string, table: st
 			element.textContent = message;
 			content.replaceChildren(element);
 			count.textContent = '';
+			pageSize.disabled = false;
+			previousPage.disabled = true;
+			nextPage.disabled = true;
 		}
 	</script>
 </body>
 </html>`;
+}
+
+function codiconsDistUri(extensionUri: vscode.Uri): vscode.Uri {
+	return vscode.Uri.joinPath(extensionUri, 'node_modules', '@vscode', 'codicons', 'dist');
 }
 
 function escapeHtml(value: string): string {

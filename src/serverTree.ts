@@ -9,7 +9,7 @@ export class ServerTreeItem extends vscode.TreeItem {
 			? `${server.username}@${server.host}:${server.port}/${server.database}`
 			: `${server.username}@${server.host}:${server.port}`;
 		this.tooltip = `${server.name}\n${this.description}`;
-		this.iconPath = new vscode.ThemeIcon(server.type === 'mysql' ? 'database' : 'terminal-secure');
+		this.iconPath = new vscode.ThemeIcon(server.type === 'mysql' ? 'database' : 'terminal-linux');
 		this.contextValue = `${server.type}Server`;
 	}
 }
