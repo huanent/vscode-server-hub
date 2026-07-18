@@ -6,12 +6,12 @@ Server Hub keeps SSH and MySQL connections close to your VS Code workspace.
 
 - Dedicated Server Hub view in the Activity Bar.
 - Add SSH or MySQL servers from the view title menu.
-- Open interactive SSH sessions from the connect button beside each server.
+- Open interactive SSH sessions using password or private key certificate authentication.
 - Open MySQL connections in an editor, switch databases, and browse table metadata in list or grid view.
 - Double-click a MySQL table to preview its first 100 rows in a separate editor.
 - Edit or delete saved servers from the tree context menu.
-- Import and export server connections as JSON, including passwords.
-- Store passwords in VS Code Secret Storage instead of plain-text extension state.
+- Import and export server connections as JSON, including credentials.
+- Store passwords, private keys, and key passphrases in VS Code Secret Storage instead of plain-text extension state.
 
 ## Usage
 
@@ -23,4 +23,4 @@ Server Hub keeps SSH and MySQL connections close to your VS Code workspace.
 6. Double-click a table to preview up to 100 rows in a separate editor.
 7. Right-click a server to edit or delete it.
 
-Use the import and export buttons in the Server List title to move connections between devices. Export files contain passwords in plain text, so keep them secure and delete them when they are no longer needed.
+Use the import and export buttons in the Server List title to move connections between devices. Export files contain passwords, private keys, and key passphrases in plain text, so keep them secure and delete them when they are no longer needed.

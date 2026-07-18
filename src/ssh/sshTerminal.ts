@@ -3,6 +3,7 @@ import * as path from 'path';
 import { Client, ClientChannel, FileEntryWithStats, SFTPWrapper } from 'ssh2';
 import { RemoteMetricsFormatter, RemoteMetricsReader } from './remoteMetrics';
 import { SshServer } from '../servers/server';
+import { ServerCredentials } from '../servers/serverStore';
 import { codiconsDistUri, createNonce, escapeHtml } from '../webview/webviewUtils';
 
 interface SshWebviewMessage {
@@ -24,7 +25,7 @@ export function configureSshTerminal(
 	extensionUri: vscode.Uri,
 	panel: vscode.WebviewPanel,
 	server: SshServer,
-	password: string,
+	credentials: ServerCredentials,
 ): void {
 	const resourcesRoot = vscode.Uri.joinPath(extensionUri, 'resources');
 	const xtermRoot = vscode.Uri.joinPath(resourcesRoot, 'xterm');
@@ -36,7 +37,7 @@ export function configureSshTerminal(
 	panel.iconPath = new vscode.ThemeIcon('terminal-linux');
 	panel.webview.html = renderSshTerminal(panel.webview, extensionUri, xtermRoot, server);
 
-	const session = new SshWebviewSession(panel, server, password);
+	const session = new SshWebviewSession(panel, server, credentials);
 	activeSshSession = session;
 	panel.onDidChangeViewState(event => {
 		if (event.webviewPanel.active) {
@@ -71,7 +72,7 @@ class SshWebviewSession {
 	constructor(
 		private readonly panel: vscode.WebviewPanel,
 		private readonly server: SshServer,
-		private readonly password: string,
+		private readonly credentials: ServerCredentials,
 	) {}
 
 	handleMessage(message: SshWebviewMessage): void {
@@ -128,7 +129,7 @@ class SshWebviewSession {
 		this.postMessage({ type: 'status', status: 'connecting', message: `${this.server.username}@${this.server.host}:${this.server.port}...` });
 		this.client
 			.on('keyboard-interactive', (_name, _instructions, _language, prompts, finish) => {
-				finish(prompts.map(() => this.password));
+				finish(prompts.map(() => this.credentials.password ?? ''));
 			})
 			.on('ready', () => this.openRemoteShell())
 			.on('error', error => this.handleConnectionFailure(error))
@@ -136,8 +137,9 @@ class SshWebviewSession {
 				host: this.server.host,
 				port: this.server.port,
 				username: this.server.username,
-				password: this.password,
-				tryKeyboard: true,
+				...(this.server.authType === 'privateKey'
+					? { privateKey: this.credentials.privateKey, passphrase: this.credentials.passphrase }
+					: { password: this.credentials.password, tryKeyboard: true }),
 				readyTimeout: 15_000,
 			});
 	}
@@ -270,7 +272,7 @@ class SshWebviewSession {
 		this.connected = false;
 		this.stopMetricsPolling();
 		const reason = error.message === 'All configured authentication methods failed'
-			? 'Authentication failed. Check the username and password, and confirm that the server allows password authentication.'
+			? `Authentication failed. Check the username and ${this.server.authType === 'privateKey' ? 'private key certificate' : 'password'}, and confirm that the server allows this authentication method.`
 			: error.message;
 		this.postMessage({ type: 'status', status: 'error', message: reason });
 		this.client.end();

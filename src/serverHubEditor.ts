@@ -30,19 +30,22 @@ export function registerServerHubEditor(
 				if (!serverType) {
 					throw new Error('The server form does not specify a server type.');
 				}
-				configureServerForm(context, panel, serverStore, serverType, server);
+				await configureServerForm(context, panel, serverStore, serverType, server);
 				return;
 			}
 
 			const server = findServer(serverStore, descriptor.serverId);
+			if (descriptor.kind === 'sshTerminal' && server.type === 'ssh') {
+				const credentials = await serverStore.getCredentials(server.id);
+				if (server.authType === 'privateKey' ? !credentials.privateKey : !credentials.password) {
+					throw new Error(`No ${server.authType === 'privateKey' ? 'private key' : 'password'} is available for “${server.name}” on this device.`);
+				}
+				configureSshTerminal(context.extensionUri, panel, server, credentials);
+				return;
+			}
 			const password = await serverStore.getPassword(server.id);
 			if (!password) {
 				throw new Error(`No password is available for “${server.name}” on this device.`);
-			}
-
-			if (descriptor.kind === 'sshTerminal' && server.type === 'ssh') {
-				configureSshTerminal(context.extensionUri, panel, server, password);
-				return;
 			}
 			if (descriptor.kind === 'mysqlEditor' && server.type === 'mysql') {
 				configureMysqlEditor(context.extensionUri, panel, server, password, (database, table) => {

@@ -12,6 +12,7 @@ export interface BaseServer {
 
 export interface SshServer extends BaseServer {
 	type: 'ssh';
+	authType: 'password' | 'privateKey';
 }
 
 export interface MysqlServer extends BaseServer {
@@ -21,21 +22,28 @@ export interface MysqlServer extends BaseServer {
 
 export type Server = SshServer | MysqlServer;
 
-export type ExportedServer = Server & { password: string };
+export type ExportedServer = Server & {
+	password: string;
+	privateKey?: string;
+	passphrase?: string;
+};
 
 export interface ServerExportFile {
-	version: 2;
+	version: 3;
 	servers: ExportedServer[];
 }
 
 export interface ServerFormMessage {
-	type: 'save';
+	type: 'save' | 'selectPrivateKey';
 	name?: unknown;
 	group?: unknown;
 	host?: unknown;
 	port?: unknown;
 	username?: unknown;
+	authType?: unknown;
 	password?: unknown;
+	privateKey?: unknown;
+	passphrase?: unknown;
 	database?: unknown;
 }
 
@@ -69,7 +77,11 @@ export function parseServerForm(
 		return { ...baseServer, type: 'mysql', database };
 	}
 
-	return { ...baseServer, type: 'ssh' };
+	return {
+		...baseServer,
+		type: 'ssh',
+		authType: message.authType === 'privateKey' ? 'privateKey' : 'password',
+	};
 }
 
 export function parseStoredServers(value: unknown): Server[] {
@@ -87,7 +99,7 @@ export function parseStoredServers(value: unknown): Server[] {
 }
 
 export function parseServerExport(value: unknown): ExportedServer[] {
-	if (!isRecord(value) || (value.version !== 1 && value.version !== 2) || !Array.isArray(value.servers)) {
+	if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3) || !Array.isArray(value.servers)) {
 		throw new Error('The file is not a supported Server Hub export.');
 	}
 
@@ -106,9 +118,17 @@ export function parseServerExport(value: unknown): ExportedServer[] {
 		if (serverIds.has(server.id)) {
 			throw new Error(`Server ${index + 1} uses a duplicate ID.`);
 		}
+		if (server.type === 'ssh' && server.authType === 'privateKey' && typeof entry.privateKey !== 'string') {
+			throw new Error(`Server ${index + 1} has no private key.`);
+		}
 
 		serverIds.add(server.id);
-		return { ...server, password: entry.password };
+		return {
+			...server,
+			password: entry.password,
+			privateKey: typeof entry.privateKey === 'string' ? entry.privateKey : undefined,
+			passphrase: typeof entry.passphrase === 'string' ? entry.passphrase : undefined,
+		};
 	});
 }
 
@@ -134,6 +154,7 @@ function parseServer(value: unknown, requireType: boolean): Server {
 		host: value.host,
 		port: value.port,
 		username: value.username,
+		authType: value.authType,
 		database: value.database,
 	}, type, id);
 	if (!server) {

@@ -18,25 +18,12 @@ export async function exportServers(serverStore: ServerStore): Promise<void> {
 
 export async function exportServer(serverStore: ServerStore, servers: Server[]): Promise<void> {
 	await exportServerFile(
-		await Promise.all(servers.map(async server => ({
-			...server,
-			password: await serverStore.getPassword(server.id) ?? '',
-		}))),
+		(await serverStore.getExportedServers()).filter(server => servers.some(selected => selected.id === server.id)),
 		servers.length === 1 ? `${sanitizeFileName(servers[0].name)}.json` : 'server-hub-export.json',
 	);
 }
 
 async function exportServerFile(servers: ExportedServer[], fileName: string): Promise<void> {
-
-	const confirmation = await vscode.window.showWarningMessage(
-		'The exported JSON file will contain passwords in plain text.',
-		{ modal: true },
-		'Export',
-	);
-	if (confirmation !== 'Export') {
-		return;
-	}
-
 	const target = await vscode.window.showSaveDialog({
 		filters: { JSON: ['json'] },
 		defaultUri: vscode.Uri.joinPath(vscode.Uri.file(homedir()), fileName),
@@ -47,7 +34,7 @@ async function exportServerFile(servers: ExportedServer[], fileName: string): Pr
 	}
 
 	const exportFile: ServerExportFile = {
-		version: 2,
+		version: 3,
 		servers,
 	};
 	try {
@@ -79,15 +66,6 @@ export async function importServers(serverStore: ServerStore): Promise<void> {
 		importedServers = parseServerExport(JSON.parse(Buffer.from(contents).toString('utf8')));
 	} catch (error) {
 		void vscode.window.showErrorMessage(`Could not import servers: ${errorMessage(error)}`);
-		return;
-	}
-
-	const confirmation = await vscode.window.showWarningMessage(
-		`Import ${formatServerCount(importedServers.length)} and store the included passwords? Existing servers with the same ID will be updated.`,
-		{ modal: true },
-		'Import',
-	);
-	if (confirmation !== 'Import') {
 		return;
 	}
 
