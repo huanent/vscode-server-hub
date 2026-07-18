@@ -27,6 +27,7 @@ export interface MysqlTableFilter {
 export interface MysqlColumnInfo {
 	name: string;
 	dataType: string;
+	boolean: boolean;
 	nullable: boolean;
 	primaryKey: boolean;
 	editable: boolean;

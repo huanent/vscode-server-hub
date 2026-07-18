@@ -191,7 +191,7 @@ export function configureMysqlTablePreview(
 			columns = fields.map((field: FieldPacket) => field.name);
 			columnNames = new Set(columns);
 			const [metadataRows] = await connection.query<RowDataPacket[]>(
-				`SELECT COLUMN_NAME AS name, DATA_TYPE AS dataType, IS_NULLABLE AS isNullable,
+				`SELECT COLUMN_NAME AS name, DATA_TYPE AS dataType, COLUMN_TYPE AS columnType, IS_NULLABLE AS isNullable,
 					COLUMN_KEY AS columnKey, EXTRA AS extra, GENERATION_EXPRESSION AS generationExpression
 				FROM information_schema.COLUMNS
 				WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
@@ -201,6 +201,7 @@ export function configureMysqlTablePreview(
 			columnInfo = metadataRows.map(row => ({
 				name: String(row.name),
 				dataType: String(row.dataType),
+				boolean: String(row.dataType).toLowerCase() === 'bit' && String(row.columnType).toLowerCase() === 'bit(1)',
 				nullable: row.isNullable === 'YES',
 				primaryKey: row.columnKey === 'PRI',
 				editable: !String(row.extra ?? '').includes('GENERATED') && !String(row.generationExpression ?? ''),
@@ -238,13 +239,14 @@ export function configureMysqlTablePreview(
 				[database, table, ...filterParameters, ...(sort ? [sort.column] : []), pageSize, offset],
 			);
 			pageRows = new Map();
+			const columnMetadata = new Map(columnInfo.map(column => [column.name, column]));
 			const tableRows = rows.map(row => {
 				const rowId = crypto.randomUUID();
 				pageRows.set(rowId, row);
 				return {
 					rowId,
-					values: columns.map(column => displayMysqlValue(row[column])),
-					editValues: columns.map(column => displayMysqlValue(row[column])),
+					values: columns.map(column => displayMysqlValue(row[column], columnMetadata.get(column)?.boolean)),
+					editValues: columns.map(column => displayMysqlValue(row[column], columnMetadata.get(column)?.boolean)),
 				};
 			});
 			void panel.webview.postMessage({
@@ -545,7 +547,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		.error { color: var(--vscode-errorForeground); white-space: pre-wrap; }
 		table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
 		th, td { max-width: 420px; height: 28px; overflow: hidden; padding: 5px 10px; border-right: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-		th { position: sticky; top: 0; z-index: 1; padding: 0; background: var(--vscode-editor-background); font-family: var(--vscode-font-family); font-size: 12px; font-weight: 600; }
+		th { position: sticky; top: 0; z-index: 2; padding: 0; background: var(--vscode-editor-background); font-family: var(--vscode-font-family); font-size: 12px; font-weight: 600; }
 		.column-heading { display: grid; grid-template-columns: minmax(80px, 1fr) auto; align-items: center; min-width: 150px; }
 		.column-name { min-width: 0; padding: 5px 4px 5px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 		.sort-controls { display: grid; grid-template-rows: 14px 14px; width: 20px; height: 28px; }
@@ -560,7 +562,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		tr:hover td { background: var(--vscode-list-hoverBackground); }
 		.null { color: var(--vscode-descriptionForeground); font-style: italic; }
 		.action-column, .row-action { position: sticky; right: 0; width: 58px; min-width: 58px; max-width: 58px; padding: 0; text-align: center; }
-		.action-column { z-index: 2; background: transparent; }
+		.action-column { z-index: 3; background: transparent; }
 		.row-action { z-index: 1; background: var(--vscode-editor-background); }
 		.row-actions { display: flex; align-items: center; justify-content: center; gap: 2px; background: transparent; }
 		tr:hover .row-action { background: var(--vscode-list-hoverBackground); }
@@ -791,7 +793,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 				name.textContent = column.name;
 				const type = document.createElement('span');
 				type.className = 'field-type';
-				type.textContent = column.dataType + (column.primaryKey ? ' · primary key' : '');
+				type.textContent = (column.boolean ? 'boolean' : column.dataType) + (column.primaryKey ? ' · primary key' : '');
 				label.append(name);
 				let nullToggle;
 				if (column.nullable && !readOnly) {
@@ -806,9 +808,16 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 				}
 				label.append(type);
 				const multiline = ['text', 'tinytext', 'mediumtext', 'longtext', 'json'].includes(column.dataType);
-				const input = document.createElement(multiline ? 'textarea' : 'input');
+				const input = document.createElement(column.boolean ? 'select' : multiline ? 'textarea' : 'input');
 				input.className = 'field-input';
-				if (!multiline) input.type = inputType(column.dataType);
+				if (column.boolean) {
+					for (const booleanValue of ['true', 'false']) {
+						const option = document.createElement('option');
+						option.value = booleanValue;
+						option.textContent = booleanValue;
+						input.append(option);
+					}
+				} else if (!multiline) input.type = inputType(column.dataType);
 				input.value = readOnly && value === null ? 'NULL' : value ?? '';
 				input.disabled = readOnly || value === null;
 				if (nullToggle) nullToggle.addEventListener('change', () => { input.disabled = nullToggle.checked; });

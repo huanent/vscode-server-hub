@@ -21,7 +21,7 @@ export function parseRowChanges(
 		if (!info || (fieldValue === null && !info.nullable)) {
 			return [];
 		}
-		return [{ column, value: parseEditValue(fieldValue, info.dataType) }];
+		return [{ column, value: parseEditValue(fieldValue, info) }];
 	});
 }
 
@@ -67,9 +67,15 @@ export function normalizeTableInfo(row: RowDataPacket): MysqlTableInfo {
 	};
 }
 
-export function displayMysqlValue(value: unknown): string | null {
+export function displayMysqlValue(value: unknown, boolean: boolean = false): string | null {
 	if (value === null || value === undefined) {
 		return null;
+	}
+	if (boolean) {
+		if (Buffer.isBuffer(value)) {
+			return value.some(byte => byte !== 0) ? 'true' : 'false';
+		}
+		return value ? 'true' : 'false';
 	}
 	if (Buffer.isBuffer(value)) {
 		return `0x${value.toString('hex')}`;
@@ -80,11 +86,14 @@ export function displayMysqlValue(value: unknown): string | null {
 	return String(value);
 }
 
-function parseEditValue(value: string | null, dataType: string): unknown {
+function parseEditValue(value: string | null, column: MysqlColumnInfo): unknown {
 	if (value === null) {
 		return null;
 	}
-	if (['binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob', 'bit'].includes(dataType) && /^0x[\da-f]*$/i.test(value)) {
+	if (column.boolean && (value === 'true' || value === 'false')) {
+		return value === 'true';
+	}
+	if (['binary', 'varbinary', 'tinyblob', 'blob', 'mediumblob', 'longblob', 'bit'].includes(column.dataType) && /^0x[\da-f]*$/i.test(value)) {
 		return Buffer.from(value.slice(2), 'hex');
 	}
 	return value;
