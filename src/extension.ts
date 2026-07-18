@@ -2,18 +2,20 @@ import * as vscode from 'vscode';
 import { Server, ServerType } from './server';
 import { openServerConnection, openServerForm, registerServerHubEditor } from './serverHubEditor';
 import { ServerStore } from './serverStore';
-import { exportServers, importServers } from './serverTransfer';
+import { exportServer, exportServers, importServers } from './serverTransfer';
 import { ServerTreeDataProvider, ServerTreeItem } from './serverTree';
 import { toggleSftpForActiveTerminal } from './sshTerminal';
 
 export function activate(context: vscode.ExtensionContext): void {
 	const serverStore = new ServerStore(context);
 	const treeDataProvider = new ServerTreeDataProvider(serverStore);
-	serverStore.enableSettingsSync();
 
 	context.subscriptions.push(
 		registerServerHubEditor(context, serverStore, treeDataProvider),
-		vscode.window.registerTreeDataProvider('server-hub.servers', treeDataProvider),
+		vscode.window.createTreeView('server-hub.servers', {
+			treeDataProvider,
+			canSelectMany: true,
+		}),
 		vscode.commands.registerCommand(
 			'server-hub.addServer',
 			() => selectAndAddServer(),
@@ -25,6 +27,13 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.commands.registerCommand(
 			'server-hub.exportServers',
 			() => exportServers(serverStore),
+		),
+		vscode.commands.registerCommand(
+			'server-hub.exportServer',
+			(item: ServerTreeItem, selectedItems?: ServerTreeItem[]) => exportServer(
+				serverStore,
+				getSelectedServers(item, selectedItems),
+			),
 		),
 		vscode.commands.registerCommand(
 			'server-hub.connectServer',
@@ -40,7 +49,11 @@ export function activate(context: vscode.ExtensionContext): void {
 		),
 		vscode.commands.registerCommand(
 			'server-hub.deleteServer',
-			(item: ServerTreeItem) => confirmAndDeleteServer(serverStore, treeDataProvider, item.server),
+			(item: ServerTreeItem, selectedItems?: ServerTreeItem[]) => confirmAndDeleteServers(
+				serverStore,
+				treeDataProvider,
+				getSelectedServers(item, selectedItems),
+			),
 		),
 		vscode.commands.registerCommand('server-hub.openSftp', toggleSftpForActiveTerminal),
 	);
@@ -56,13 +69,19 @@ async function selectAndAddServer(): Promise<void> {
 	}
 }
 
-async function confirmAndDeleteServer(
+function getSelectedServers(item: ServerTreeItem, selectedItems?: ServerTreeItem[]): Server[] {
+	return (selectedItems?.length ? selectedItems : [item]).map(selectedItem => selectedItem.server);
+}
+
+async function confirmAndDeleteServers(
 	serverStore: ServerStore,
 	treeDataProvider: ServerTreeDataProvider,
-	server: Server,
+	servers: Server[],
 ): Promise<void> {
 	const confirmation = await vscode.window.showWarningMessage(
-		`Delete server “${server.name}”?`,
+		servers.length === 1
+			? `Delete server “${servers[0].name}”?`
+			: `Delete ${servers.length} selected servers?`,
 		{ modal: true },
 		'Delete',
 	);
@@ -70,7 +89,7 @@ async function confirmAndDeleteServer(
 		return;
 	}
 
-	await serverStore.deleteServer(server.id);
+	await serverStore.deleteServers(servers.map(server => server.id));
 	treeDataProvider.refresh();
 }
 

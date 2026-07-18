@@ -57,17 +57,22 @@
       },
       {
         "command": "server-hub.importServers",
-        "title": "Import Servers",
+        "title": "Import",
         "icon": "$(cloud-download)"
       },
       {
         "command": "server-hub.exportServers",
-        "title": "Export Servers",
+        "title": "Export",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "server-hub.exportServer",
+        "title": "Export",
         "icon": "$(cloud-upload)"
       },
       {
         "command": "server-hub.connectServer",
-        "title": "Connect Server",
+        "title": "Connect",
         "icon": "$(run-compact)"
       },
       {
@@ -77,17 +82,17 @@
       },
       {
         "command": "server-hub.editServer",
-        "title": "Edit Server",
+        "title": "Edit Connection",
         "icon": "$(edit)"
       },
       {
         "command": "server-hub.deleteServer",
-        "title": "Delete Server",
+        "title": "Delete",
         "icon": "$(trash)"
       },
       {
         "command": "server-hub.openSftp",
-        "title": "Open SFTP Browser",
+        "title": "Open SFTP",
         "icon": "$(folder)"
       }
     ],
@@ -124,13 +129,18 @@
         },
         {
           "command": "server-hub.editServer",
-          "when": "view == server-hub.servers && (viewItem == sshServer || viewItem == mysqlServer)",
+          "when": "view == server-hub.servers && !listMultiSelection && (viewItem == sshServer || viewItem == mysqlServer)",
           "group": "1_modification"
         },
         {
           "command": "server-hub.copyHost",
-          "when": "view == server-hub.servers && (viewItem == sshServer || viewItem == mysqlServer)",
+          "when": "view == server-hub.servers && !listMultiSelection && (viewItem == sshServer || viewItem == mysqlServer)",
           "group": "1_modification@2"
+        },
+        {
+          "command": "server-hub.exportServer",
+          "when": "view == server-hub.servers && (viewItem == sshServer || viewItem == mysqlServer)",
+          "group": "1_modification@3"
         },
         {
           "command": "server-hub.deleteServer",

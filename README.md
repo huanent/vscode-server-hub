@@ -11,7 +11,6 @@ Server Hub keeps SSH and MySQL connections close to your VS Code workspace.
 - Double-click a MySQL table to preview its first 100 rows in a separate editor.
 - Edit or delete saved servers from the tree context menu.
 - Import and export server connections as JSON, including passwords.
-- Sync server names, hosts, ports, and usernames through VS Code Settings Sync.
 - Store passwords in VS Code Secret Storage instead of plain-text extension state.
 
 ## Usage
@@ -26,14 +25,9 @@ Server Hub keeps SSH and MySQL connections close to your VS Code workspace.
 
 Use the import and export buttons in the Server List title to move connections between devices. Export files contain passwords in plain text, so keep them secure and delete them when they are no longer needed.
 
-## Synchronization
-
-Connection metadata is stored in extension global state and registered for Settings Sync. Passwords are encrypted with VS Code Secret Storage and remain device-local, so a password must be entered again when the synchronized connection appears on another device.
-
 ## Requirements
 
 - A reachable SSH or MySQL server that accepts password authentication.
-- VS Code Settings Sync enabled when cross-device connection metadata synchronization is desired.
 
 ## Current Limitations
 

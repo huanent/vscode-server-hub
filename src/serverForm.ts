@@ -67,7 +67,7 @@ function renderServerForm(webview: vscode.Webview, serverType: ServerType, serve
 </head>
 <body>
 	<h1>${title}</h1>
-	<p>Connection details are synced. The password remains encrypted on this device.</p>
+	<p>Connection details are stored on this device. The password remains encrypted.</p>
 	<form id="server-form">
 		<label>Name<input name="name" autocomplete="off" required autofocus placeholder="Production" value="${escapeHtml(server?.name ?? '')}"></label>
 		<div class="connection">

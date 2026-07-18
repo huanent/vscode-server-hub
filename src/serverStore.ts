@@ -6,15 +6,6 @@ const serversStateKey = 'server-hub.servers';
 export class ServerStore {
 	constructor(private readonly context: vscode.ExtensionContext) {}
 
-	enableSettingsSync(): void {
-		this.context.globalState.setKeysForSync([serversStateKey]);
-		const storedServers = this.context.globalState.get<unknown>(serversStateKey, []);
-		const normalizedServers = parseStoredServers(storedServers);
-		if (JSON.stringify(storedServers) !== JSON.stringify(normalizedServers)) {
-			void this.context.globalState.update(serversStateKey, normalizedServers);
-		}
-	}
-
 	getServers(): Server[] {
 		return parseStoredServers(this.context.globalState.get<unknown>(serversStateKey, []));
 	}
@@ -32,11 +23,16 @@ export class ServerStore {
 	}
 
 	async deleteServer(serverId: string): Promise<void> {
+		await this.deleteServers([serverId]);
+	}
+
+	async deleteServers(serverIds: string[]): Promise<void> {
+		const deletedIds = new Set(serverIds);
 		await this.context.globalState.update(
 			serversStateKey,
-			this.getServers().filter(server => server.id !== serverId),
+			this.getServers().filter(server => !deletedIds.has(server.id)),
 		);
-		await this.context.secrets.delete(passwordKey(serverId));
+		await Promise.all(serverIds.map(serverId => this.context.secrets.delete(passwordKey(serverId))));
 	}
 
 	getPassword(serverId: string): Thenable<string | undefined> {

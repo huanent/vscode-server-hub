@@ -1,6 +1,6 @@
 import { homedir } from 'node:os';
 import * as vscode from 'vscode';
-import { ExportedServer, parseServerExport, ServerExportFile } from './server';
+import { ExportedServer, parseServerExport, Server, ServerExportFile } from './server';
 import { ServerStore } from './serverStore';
 import { ServerTreeDataProvider } from './serverTree';
 
@@ -10,6 +10,24 @@ export async function exportServers(serverStore: ServerStore): Promise<void> {
 		void vscode.window.showInformationMessage('There are no servers to export.');
 		return;
 	}
+
+	await exportServerFile(
+		await serverStore.getExportedServers(),
+		'server-hub-export.json',
+	);
+}
+
+export async function exportServer(serverStore: ServerStore, servers: Server[]): Promise<void> {
+	await exportServerFile(
+		await Promise.all(servers.map(async server => ({
+			...server,
+			password: await serverStore.getPassword(server.id) ?? '',
+		}))),
+		servers.length === 1 ? `${sanitizeFileName(servers[0].name)}.json` : 'server-hub-export.json',
+	);
+}
+
+async function exportServerFile(servers: ExportedServer[], fileName: string): Promise<void> {
 
 	const confirmation = await vscode.window.showWarningMessage(
 		'The exported JSON file will contain passwords in plain text.',
@@ -22,7 +40,7 @@ export async function exportServers(serverStore: ServerStore): Promise<void> {
 
 	const target = await vscode.window.showSaveDialog({
 		filters: { JSON: ['json'] },
-		defaultUri: vscode.Uri.joinPath(vscode.Uri.file(homedir()), 'server-hub-export.json'),
+		defaultUri: vscode.Uri.joinPath(vscode.Uri.file(homedir()), fileName),
 		saveLabel: 'Export',
 	});
 	if (!target) {
@@ -31,7 +49,7 @@ export async function exportServers(serverStore: ServerStore): Promise<void> {
 
 	const exportFile: ServerExportFile = {
 		version: 2,
-		servers: await serverStore.getExportedServers(),
+		servers,
 	};
 	try {
 		await vscode.workspace.fs.writeFile(
@@ -88,4 +106,8 @@ function formatServerCount(count: number): string {
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function sanitizeFileName(fileName: string): string {
+	return fileName.replace(/[\\/:*?"<>|]/g, '-');
 }
