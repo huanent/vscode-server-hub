@@ -1,14 +1,16 @@
 import * as vscode from 'vscode';
-import { SshServer } from './server';
+import { Server } from './server';
 import { ServerStore } from './serverStore';
 
 export class ServerTreeItem extends vscode.TreeItem {
-	constructor(readonly server: SshServer) {
+	constructor(readonly server: Server) {
 		super(server.name, vscode.TreeItemCollapsibleState.None);
-		this.description = `${server.username}@${server.host}:${server.port}`;
+		this.description = server.type === 'mysql'
+			? `${server.username}@${server.host}:${server.port}/${server.database}`
+			: `${server.username}@${server.host}:${server.port}`;
 		this.tooltip = `${server.name}\n${this.description}`;
-		this.iconPath = new vscode.ThemeIcon('terminal-secure');
-		this.contextValue = 'sshServer';
+		this.iconPath = new vscode.ThemeIcon(server.type === 'mysql' ? 'database' : 'terminal-secure');
+		this.contextValue = `${server.type}Server`;
 	}
 }
 

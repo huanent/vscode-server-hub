@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { ExportedSshServer, SshServer } from './server';
+import { ExportedServer, parseStoredServers, Server } from './server';
 
 const serversStateKey = 'server-hub.servers';
 
@@ -8,13 +8,18 @@ export class ServerStore {
 
 	enableSettingsSync(): void {
 		this.context.globalState.setKeysForSync([serversStateKey]);
+		const storedServers = this.context.globalState.get<unknown>(serversStateKey, []);
+		const normalizedServers = parseStoredServers(storedServers);
+		if (JSON.stringify(storedServers) !== JSON.stringify(normalizedServers)) {
+			void this.context.globalState.update(serversStateKey, normalizedServers);
+		}
 	}
 
-	getServers(): SshServer[] {
-		return this.context.globalState.get<SshServer[]>(serversStateKey, []);
+	getServers(): Server[] {
+		return parseStoredServers(this.context.globalState.get<unknown>(serversStateKey, []));
 	}
 
-	async saveServer(server: SshServer, password?: string): Promise<void> {
+	async saveServer(server: Server, password?: string): Promise<void> {
 		const servers = this.getServers();
 		const exists = servers.some(current => current.id === server.id);
 		const updatedServers = exists
@@ -38,14 +43,14 @@ export class ServerStore {
 		return this.context.secrets.get(passwordKey(serverId));
 	}
 
-	async getExportedServers(): Promise<ExportedSshServer[]> {
+	async getExportedServers(): Promise<ExportedServer[]> {
 		return Promise.all(this.getServers().map(async server => ({
 			...server,
 			password: await this.getPassword(server.id) ?? '',
 		})));
 	}
 
-	async importServers(importedServers: ExportedSshServer[]): Promise<void> {
+	async importServers(importedServers: ExportedServer[]): Promise<void> {
 		const importedIds = new Set(importedServers.map(server => server.id));
 		const updatedServers = [
 			...this.getServers().filter(server => !importedIds.has(server.id)),

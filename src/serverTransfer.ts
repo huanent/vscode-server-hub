@@ -1,13 +1,13 @@
 import { homedir } from 'node:os';
 import * as vscode from 'vscode';
-import { ExportedSshServer, parseServerExport, ServerExportFile } from './server';
+import { ExportedServer, parseServerExport, ServerExportFile } from './server';
 import { ServerStore } from './serverStore';
 import { ServerTreeDataProvider } from './serverTree';
 
 export async function exportServers(serverStore: ServerStore): Promise<void> {
 	const servers = serverStore.getServers();
 	if (servers.length === 0) {
-		void vscode.window.showInformationMessage('There are no SSH servers to export.');
+		void vscode.window.showInformationMessage('There are no servers to export.');
 		return;
 	}
 
@@ -30,7 +30,7 @@ export async function exportServers(serverStore: ServerStore): Promise<void> {
 	}
 
 	const exportFile: ServerExportFile = {
-		version: 1,
+		version: 2,
 		servers: await serverStore.getExportedServers(),
 	};
 	try {
@@ -59,12 +59,12 @@ export async function importServers(
 		return;
 	}
 
-	let importedServers: ExportedSshServer[];
+	let importedServers: ExportedServer[];
 	try {
 		const contents = await vscode.workspace.fs.readFile(selection[0]);
 		importedServers = parseServerExport(JSON.parse(Buffer.from(contents).toString('utf8')));
 	} catch (error) {
-		void vscode.window.showErrorMessage(`Could not import SSH servers: ${errorMessage(error)}`);
+		void vscode.window.showErrorMessage(`Could not import servers: ${errorMessage(error)}`);
 		return;
 	}
 
@@ -83,7 +83,7 @@ export async function importServers(
 }
 
 function formatServerCount(count: number): string {
-	return `${count} SSH server${count === 1 ? '' : 's'}`;
+	return `${count} server${count === 1 ? '' : 's'}`;
 }
 
 function errorMessage(error: unknown): string {

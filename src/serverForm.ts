@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { normalizePassword, parseServerForm, ServerFormMessage, SshServer } from './server';
+import { normalizePassword, parseServerForm, Server, ServerFormMessage, ServerType } from './server';
 import { ServerStore } from './serverStore';
 import { ServerTreeDataProvider } from './serverTree';
 
@@ -7,23 +7,25 @@ export function openServerForm(
 	context: vscode.ExtensionContext,
 	serverStore: ServerStore,
 	treeDataProvider: ServerTreeDataProvider,
-	existingServer?: SshServer,
+	serverType: ServerType,
+	existingServer?: Server,
 ): void {
 	const isEditing = existingServer !== undefined;
+	const typeLabel = serverType === 'mysql' ? 'MySQL' : 'SSH';
 	const panel = vscode.window.createWebviewPanel(
 		'server-hub.serverForm',
-		isEditing ? 'Edit Server' : 'Add Server',
+		`${isEditing ? 'Edit' : 'Add'} ${typeLabel} Server`,
 		vscode.ViewColumn.Active,
 		{ enableScripts: true },
 	);
 
-	panel.webview.html = renderServerForm(panel.webview, existingServer);
+	panel.webview.html = renderServerForm(panel.webview, serverType, existingServer);
 	panel.webview.onDidReceiveMessage(async (message: ServerFormMessage) => {
 		if (message.type !== 'save') {
 			return;
 		}
 
-		const server = parseServerForm(message, existingServer?.id);
+		const server = parseServerForm(message, serverType, existingServer?.id);
 		const password = normalizePassword(message.password);
 		if (!server || (!isEditing && !password)) {
 			void panel.webview.postMessage({ type: 'error', message: 'Please complete all required fields.' });
@@ -33,14 +35,17 @@ export function openServerForm(
 		await serverStore.saveServer(server, password || undefined);
 		treeDataProvider.refresh();
 		panel.dispose();
-		void vscode.window.showInformationMessage(`${isEditing ? 'Updated' : 'Saved'} SSH server “${server.name}”.`);
+		void vscode.window.showInformationMessage(`${isEditing ? 'Updated' : 'Saved'} ${typeLabel} server “${server.name}”.`);
 	}, undefined, context.subscriptions);
 }
 
-function renderServerForm(webview: vscode.Webview, server?: SshServer): string {
+function renderServerForm(webview: vscode.Webview, serverType: ServerType, server?: Server): string {
 	const nonce = crypto.randomUUID().replaceAll('-', '');
 	const isEditing = server !== undefined;
-	const title = isEditing ? 'Edit Server' : 'Add Server';
+	const typeLabel = serverType === 'mysql' ? 'MySQL' : 'SSH';
+	const title = `${isEditing ? 'Edit' : 'Add'} ${typeLabel} Server`;
+	const defaultPort = serverType === 'mysql' ? 3306 : 22;
+	const database = server?.type === 'mysql' ? server.database : '';
 	return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -70,9 +75,10 @@ function renderServerForm(webview: vscode.Webview, server?: SshServer): string {
 		<label>Name<input name="name" autocomplete="off" required autofocus placeholder="Production" value="${escapeHtml(server?.name ?? '')}"></label>
 		<div class="connection">
 			<label>Host<input name="host" autocomplete="off" required placeholder="server.example.com" value="${escapeHtml(server?.host ?? '')}"></label>
-			<label>Port<input name="port" type="number" min="1" max="65535" value="${server?.port ?? 22}" required></label>
+			<label>Port<input name="port" type="number" min="1" max="65535" value="${server?.port ?? defaultPort}" required></label>
 		</div>
 		<label>Username<input name="username" autocomplete="username" required placeholder="root" value="${escapeHtml(server?.username ?? '')}"></label>
+		${serverType === 'mysql' ? `<label>Database<input name="database" autocomplete="off" required placeholder="app" value="${escapeHtml(database)}"></label>` : ''}
 		<label>Password<input name="password" type="password" autocomplete="current-password" ${isEditing ? 'placeholder="Leave blank to keep the current password"' : 'required'}></label>
 		<div id="error" role="alert"></div>
 		<button type="submit">${isEditing ? 'Update Server' : 'Save Server'}</button>

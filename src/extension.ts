@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { SshServer } from './server';
+import { openMysqlEditor } from './mysqlEditor';
+import { Server, ServerType } from './server';
 import { openServerForm } from './serverForm';
 import { ServerStore } from './serverStore';
 import { exportServers, importServers } from './serverTransfer';
@@ -15,7 +16,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		vscode.window.registerTreeDataProvider('server-hub.servers', treeDataProvider),
 		vscode.commands.registerCommand(
 			'server-hub.addServer',
-			() => openServerForm(context, serverStore, treeDataProvider),
+			() => selectAndAddServer(context, serverStore, treeDataProvider),
 		),
 		vscode.commands.registerCommand(
 			'server-hub.importServers',
@@ -31,7 +32,7 @@ export function activate(context: vscode.ExtensionContext): void {
 		),
 		vscode.commands.registerCommand(
 			'server-hub.editServer',
-			(item: ServerTreeItem) => openServerForm(context, serverStore, treeDataProvider, item.server),
+			(item: ServerTreeItem) => openServerForm(context, serverStore, treeDataProvider, item.server.type, item.server),
 		),
 		vscode.commands.registerCommand(
 			'server-hub.deleteServer',
@@ -40,20 +41,39 @@ export function activate(context: vscode.ExtensionContext): void {
 	);
 }
 
-async function connectToServer(serverStore: ServerStore, server: SshServer): Promise<void> {
+async function selectAndAddServer(
+	context: vscode.ExtensionContext,
+	serverStore: ServerStore,
+	treeDataProvider: ServerTreeDataProvider,
+): Promise<void> {
+	const selection = await vscode.window.showQuickPick<{ label: string; description: string; type: ServerType }>([
+		{ label: 'SSH', description: 'Interactive remote terminal', type: 'ssh' },
+		{ label: 'MySQL', description: 'Browse tables and preview data', type: 'mysql' },
+	], { title: 'Add Server', placeHolder: 'Select a server type' });
+	if (selection) {
+		openServerForm(context, serverStore, treeDataProvider, selection.type);
+	}
+}
+
+async function connectToServer(serverStore: ServerStore, server: Server): Promise<void> {
 	const password = await serverStore.getPassword(server.id);
 	if (!password) {
 		void vscode.window.showErrorMessage(`No password is available for “${server.name}” on this device.`);
 		return;
 	}
 
-	openSshTerminal(server, password);
+	if (server.type === 'ssh') {
+		openSshTerminal(server, password);
+		return;
+	}
+
+	openMysqlEditor(server, password);
 }
 
 async function confirmAndDeleteServer(
 	serverStore: ServerStore,
 	treeDataProvider: ServerTreeDataProvider,
-	server: SshServer,
+	server: Server,
 ): Promise<void> {
 	const confirmation = await vscode.window.showWarningMessage(
 		`Delete server “${server.name}”?`,
