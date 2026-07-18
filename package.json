@@ -74,12 +74,12 @@
         {
           "command": "server-hub.importServers",
           "when": "view == server-hub.servers",
-          "group": "navigation@2"
+          "group": "1_transfer@1"
         },
         {
           "command": "server-hub.exportServers",
           "when": "view == server-hub.servers",
-          "group": "navigation@3"
+          "group": "1_transfer@2"
         },
         {
           "command": "server-hub.addServer",

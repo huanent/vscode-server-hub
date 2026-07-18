@@ -10,7 +10,7 @@ export function openSshTerminal(server: SshServer, password: string): void {
 		name: server.name,
 		pty: new SshTerminalPseudoterminal(server, password),
 		location: vscode.TerminalLocation.Editor,
-		iconPath: new vscode.ThemeIcon('remote'),
+		iconPath: new vscode.ThemeIcon('terminal-secure'),
 	});
 	terminal.show();
 }
