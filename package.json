@@ -72,9 +72,21 @@
         "command": "server-hub.deleteServer",
         "title": "Delete Server",
         "icon": "$(trash)"
+      },
+      {
+        "command": "server-hub.openSftp",
+        "title": "Open SFTP Browser",
+        "icon": "$(folder)"
       }
     ],
     "menus": {
+      "editor/title": [
+        {
+          "command": "server-hub.openSftp",
+          "when": "activeWebviewPanelId == server-hub.sshTerminal",
+          "group": "navigation@1"
+        }
+      ],
       "view/title": [
         {
           "command": "server-hub.importServers",

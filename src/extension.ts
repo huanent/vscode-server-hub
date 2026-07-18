@@ -5,7 +5,7 @@ import { openServerForm } from './serverForm';
 import { ServerStore } from './serverStore';
 import { exportServers, importServers } from './serverTransfer';
 import { ServerTreeDataProvider, ServerTreeItem } from './serverTree';
-import { openSshTerminal } from './sshTerminal';
+import { openSshTerminal, toggleSftpForActiveTerminal } from './sshTerminal';
 
 export function activate(context: vscode.ExtensionContext): void {
 	const serverStore = new ServerStore(context);
@@ -42,6 +42,7 @@ export function activate(context: vscode.ExtensionContext): void {
 			'server-hub.deleteServer',
 			(item: ServerTreeItem) => confirmAndDeleteServer(serverStore, treeDataProvider, item.server),
 		),
+		vscode.commands.registerCommand('server-hub.openSftp', toggleSftpForActiveTerminal),
 	);
 }
 
