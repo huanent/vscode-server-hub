@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { randomUUID } from 'crypto';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
@@ -9,7 +10,7 @@ import { ServerCredentials } from '../servers/serverStore';
 import { codiconsDistUri, createNonce, escapeHtml } from '../webview/webviewUtils';
 
 interface SshWebviewMessage {
-	type: 'input' | 'resize' | 'ready' | 'sftpList' | 'sftpDelete' | 'sftpDownload' | 'sftpUpload' | 'sftpCopyPath' | 'sftpCreateDirectory' | 'sftpProperties';
+	type: 'input' | 'resize' | 'ready' | 'sftpList' | 'sftpDelete' | 'sftpDownload' | 'sftpUpload' | 'sftpCopyPath' | 'sftpCreateDirectory' | 'sftpProperties' | 'sftpEdit';
 	data?: unknown;
 	rows?: unknown;
 	columns?: unknown;
@@ -18,7 +19,35 @@ interface SshWebviewMessage {
 }
 
 const metricsRefreshIntervalMs = 5000;
+const sftpEditTempRoot = path.join(os.tmpdir(), 'server-hub-sftp-edit');
+const sftpEditFiles = new Map<string, {
+	remotePath: string;
+	upload: (localPath: string, remotePath: string) => Promise<void>;
+	pendingSave: Promise<void>;
+}>();
 let activeSshSession: SshWebviewSession | undefined;
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+export async function initializeSftpFileEditing(context: vscode.ExtensionContext): Promise<void> {
+	await fs.rm(sftpEditTempRoot, { recursive: true, force: true });
+	await fs.mkdir(sftpEditTempRoot, { recursive: true });
+	sftpEditFiles.clear();
+	context.subscriptions.push(vscode.workspace.onDidSaveTextDocument(document => {
+		const editFile = sftpEditFiles.get(document.uri.fsPath);
+		if (!editFile) {
+			return;
+		}
+		editFile.pendingSave = editFile.pendingSave
+			.catch(() => undefined)
+			.then(() => editFile.upload(document.uri.fsPath, editFile.remotePath))
+			.catch(error => {
+				void vscode.window.showErrorMessage(`Could not save remote file: ${errorMessage(error)}`);
+			});
+	}));
+}
 
 export function toggleSftpForActiveTerminal(): void {
 	activeSshSession?.toggleSftp();
@@ -125,6 +154,10 @@ class SshWebviewSession {
 		}
 		if (message.type === 'sftpProperties' && typeof message.path === 'string') {
 			void this.showSftpProperties(message.path);
+			return;
+		}
+		if (message.type === 'sftpEdit' && typeof message.path === 'string') {
+			void this.editSftpFile(message.path);
 			return;
 		}
 		if (
@@ -268,6 +301,48 @@ class SshWebviewSession {
 			void vscode.window.showInformationMessage(`Downloaded ${path.posix.basename(remotePath)}.`);
 		} catch (error) {
 			void vscode.window.showErrorMessage(`Could not download item: ${this.errorMessage(error)}`);
+		}
+	}
+
+	private async editSftpFile(remotePath: string): Promise<void> {
+		try {
+			const sftp = await this.getSftp();
+			const editDirectory = path.join(sftpEditTempRoot, randomUUID());
+			const localPath = path.join(editDirectory, path.posix.basename(remotePath));
+			await fs.mkdir(editDirectory, { recursive: true });
+			await vscode.window.withProgress({
+				location: vscode.ProgressLocation.Notification,
+				title: `Opening ${path.posix.basename(remotePath)}`,
+			}, progress => this.transferFile(
+				(progressStep, done) => sftp.fastGet(remotePath, localPath, { step: progressStep }, done),
+				progress,
+			));
+			sftpEditFiles.set(localPath, {
+				remotePath,
+				upload: (source, destination) => this.uploadEditedSftpFile(source, destination),
+				pendingSave: Promise.resolve(),
+			});
+			const document = await vscode.workspace.openTextDocument(vscode.Uri.file(localPath));
+			await vscode.window.showTextDocument(document, { preview: false });
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not edit remote file: ${this.errorMessage(error)}`);
+		}
+	}
+
+	private async uploadEditedSftpFile(localPath: string, remotePath: string): Promise<void> {
+		if (this.disposed || !this.connected) {
+			throw new Error('The SSH connection is no longer available.');
+		}
+		const sftp = await this.getSftp();
+		await vscode.window.withProgress({
+			location: vscode.ProgressLocation.Notification,
+			title: `Saving ${path.posix.basename(remotePath)}`,
+		}, progress => this.transferFile(
+			(progressStep, done) => sftp.fastPut(localPath, remotePath, { step: progressStep }, done),
+			progress,
+		));
+		if (path.posix.dirname(remotePath) === this.sftpPath) {
+			await this.loadSftpDirectory(this.sftpPath);
 		}
 	}
 
@@ -628,7 +703,7 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		.context-menu { position: fixed; z-index: 10; min-width: 170px; padding: 4px; border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border)); border-radius: 4px; color: var(--vscode-menu-foreground); background: var(--vscode-menu-background); box-shadow: 0 2px 8px var(--vscode-widget-shadow); }
 		.toolbar-menu { position: absolute; top: 30px; right: 0; }
 		.context-menu[hidden] { display: none; }
-		.context-menu button { display: grid; grid-template-columns: 20px 1fr; align-items: center; width: 100%; min-height: 26px; padding: 3px 8px; border: 0; border-radius: 3px; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+		.context-menu button { display: grid; grid-template-columns: 20px 1fr; align-items: center; column-gap: 4px; width: 100%; min-height: 26px; padding: 3px 8px; border: 0; border-radius: 3px; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
 		.context-menu button:hover { color: var(--vscode-menu-selectionForeground); background: var(--vscode-menu-selectionBackground); }
 		.context-menu .danger { color: var(--vscode-errorForeground); }
 		.connection-status { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; pointer-events: none; }
@@ -870,6 +945,8 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 			if (entry.isDirectory) {
 				actions.push(['new-folder', 'New Folder', () => vscode.postMessage({ type: 'sftpCreateDirectory', path: entry.path })]);
 				actions.push(['cloud-upload', 'Upload Files', () => vscode.postMessage({ type: 'sftpUpload', path: entry.path })]);
+			} else {
+				actions.push(['edit', 'Edit Text', () => vscode.postMessage({ type: 'sftpEdit', path: entry.path })]);
 			}
 			actions.push(['cloud-download', 'Download', () => vscode.postMessage({ type: 'sftpDownload', path: entry.path, isDirectory: entry.isDirectory })]);
 			actions.push(['copy', 'Copy Path', () => vscode.postMessage({ type: 'sftpCopyPath', path: entry.path })]);

@@ -3,8 +3,10 @@ import { registerServerCommands } from './commands/registerServerCommands';
 import { registerServerHubEditor } from './editors/serverHubEditor';
 import { ServerStore } from './servers/serverStore';
 import { ServerTreeDataProvider } from './servers/serverTree';
+import { initializeSftpFileEditing } from './ssh/sshTerminal';
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+	await initializeSftpFileEditing(context);
 	const serverStore = new ServerStore(context);
 	const treeDataProvider = new ServerTreeDataProvider(serverStore);
 
