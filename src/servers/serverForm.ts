@@ -79,7 +79,6 @@ export async function configureServerForm(
 
 		await serverStore.saveServer(server, credentials);
 		panel.dispose();
-		void vscode.window.showInformationMessage(`${isEditing ? 'Updated' : 'Saved'} ${typeLabel} server “${server.name}”.`);
 	}, undefined, context.subscriptions);
 }
 
@@ -115,6 +114,10 @@ function renderServerForm(
 		.field-label { color: var(--vscode-descriptionForeground); font-size: 11px; font-weight: 700; letter-spacing: 0; text-transform: uppercase; }
 		.required { color: var(--vscode-errorForeground); }
 		input, select, textarea { width: 100%; min-height: 30px; padding: 5px 8px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border, transparent); border-radius: 3px; outline: none; font: inherit; }
+		.group-control { position: relative; display: block; }
+		.group-options { position: absolute; z-index: 3; top: calc(100% + 3px); left: 0; right: 0; display: block; max-height: 180px; overflow-y: auto; padding: 3px; background: var(--vscode-dropdown-background); border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border)); box-shadow: 0 4px 12px var(--vscode-widget-shadow); }
+		.group-option { display: block; width: 100%; padding: 5px 7px; color: var(--vscode-dropdown-foreground); cursor: pointer; }
+		.group-option[aria-selected="true"] { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
 		textarea { min-height: 140px; resize: vertical; font-family: var(--vscode-editor-font-family); }
 		input:hover, select:hover, textarea:hover { border-color: var(--vscode-dropdown-border, var(--vscode-input-border, transparent)); }
 		input:focus, select:focus, textarea:focus { border-color: var(--vscode-focusBorder); box-shadow: 0 0 0 1px var(--vscode-focusBorder); }
@@ -183,8 +186,70 @@ function renderServerForm(
 		const passwordInput = form.elements.namedItem('password');
 		const privateKeyInput = form.elements.namedItem('privateKey');
 		const selectPrivateKeyButton = document.getElementById('select-private-key');
+		const groupInput = form.elements.namedItem('group');
+		const groupOptions = document.getElementById('group-options');
 		const isEditing = ${JSON.stringify(isEditing)};
 		const initialAuthType = ${JSON.stringify(server?.type === 'ssh' ? server.authType : 'password')};
+		let highlightedGroup = -1;
+		const visibleGroupOptions = () => [...groupOptions.querySelectorAll('.group-option:not([hidden])')];
+		const closeGroupOptions = () => {
+			groupOptions.hidden = true;
+			groupInput.setAttribute('aria-expanded', 'false');
+			groupInput.removeAttribute('aria-activedescendant');
+			highlightedGroup = -1;
+		};
+		const highlightGroup = index => {
+			const options = visibleGroupOptions();
+			if (!options.length) return;
+			highlightedGroup = (index + options.length) % options.length;
+			for (const [optionIndex, option] of options.entries()) {
+				option.setAttribute('aria-selected', String(optionIndex === highlightedGroup));
+			}
+			const option = options[highlightedGroup];
+			groupInput.setAttribute('aria-activedescendant', option.id);
+			option.scrollIntoView({ block: 'nearest' });
+		};
+		const openGroupOptions = () => {
+			const query = groupInput.value.trim().toLocaleLowerCase();
+			for (const option of groupOptions.querySelectorAll('.group-option')) {
+				option.hidden = query !== '' && !option.dataset.value.toLocaleLowerCase().includes(query);
+				option.setAttribute('aria-selected', 'false');
+			}
+			const hasOptions = visibleGroupOptions().length > 0;
+			groupOptions.hidden = !hasOptions;
+			groupInput.setAttribute('aria-expanded', String(hasOptions));
+			groupInput.removeAttribute('aria-activedescendant');
+			highlightedGroup = -1;
+		};
+		const selectGroup = option => {
+			groupInput.value = option.dataset.value;
+			closeGroupOptions();
+			groupInput.dispatchEvent(new Event('input', { bubbles: true }));
+		};
+		groupInput.addEventListener('focus', openGroupOptions);
+		groupInput.addEventListener('input', openGroupOptions);
+		groupInput.addEventListener('keydown', event => {
+			if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+				event.preventDefault();
+				if (groupOptions.hidden) openGroupOptions();
+				const offset = event.key === 'ArrowDown' ? 1 : -1;
+				highlightGroup(highlightedGroup < 0 && offset < 0 ? visibleGroupOptions().length - 1 : highlightedGroup + offset);
+				return;
+			}
+			if (event.key === 'Enter' && highlightedGroup >= 0) {
+				event.preventDefault();
+				selectGroup(visibleGroupOptions()[highlightedGroup]);
+				return;
+			}
+			if (event.key === 'Escape') closeGroupOptions();
+		});
+		groupInput.addEventListener('blur', () => setTimeout(closeGroupOptions));
+		for (const option of groupOptions.querySelectorAll('.group-option')) {
+			option.addEventListener('mousedown', event => {
+				event.preventDefault();
+				selectGroup(option);
+			});
+		}
 		for (const tab of document.querySelectorAll('.auth-tab')) {
 			tab.addEventListener('click', () => {
 				authType.value = tab.dataset.authType;
@@ -259,9 +324,11 @@ function renderFormTopbar(groups: string[], server: Server | undefined, isEditin
 			</label>
 			<label class="field group-field">
 				<span class="field-label">Group</span>
-				<input name="group" list="server-groups" autocomplete="off" placeholder="No group" value="${escapeHtml(server?.group ?? '')}">
+				<span class="group-control">
+					<input name="group" role="combobox" aria-autocomplete="list" aria-controls="group-options" aria-expanded="false" autocomplete="off" placeholder="No group" value="${escapeHtml(server?.group ?? '')}">
+					<span id="group-options" class="group-options" role="listbox" hidden>${groups.map((group, index) => `<span id="group-option-${index}" class="group-option" role="option" aria-selected="false" data-value="${escapeHtml(group)}">${escapeHtml(group)}</span>`).join('')}</span>
+				</span>
 			</label>
-			<datalist id="server-groups">${groups.map(group => `<option value="${escapeHtml(group)}"></option>`).join('')}</datalist>
 			<div class="save-area">
 				<button id="save-button" type="submit" disabled>Save</button>
 			</div>

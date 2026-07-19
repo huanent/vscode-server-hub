@@ -3,7 +3,7 @@ import { openServerConnection, openServerForm } from '../editors/serverHubEditor
 import { Server, ServerType } from '../servers/server';
 import { ServerStore } from '../servers/serverStore';
 import { exportServer, exportServers, importServers } from '../servers/serverTransfer';
-import { ServerTreeItem } from '../servers/serverTree';
+import { ServerGroupTreeItem, ServerTreeItem } from '../servers/serverTree';
 import { toggleSftpForActiveTerminal } from '../ssh/sshTerminal';
 
 const commandIds = {
@@ -14,6 +14,7 @@ const commandIds = {
 	connectServer: 'server-hub.connectServer',
 	copyHost: 'server-hub.copyHost',
 	editServer: 'server-hub.editServer',
+	renameGroup: 'server-hub.renameGroup',
 	deleteServer: 'server-hub.deleteServer',
 	openSftp: 'server-hub.openSftp',
 } as const;
@@ -49,6 +50,10 @@ export function registerServerCommands(serverStore: ServerStore): vscode.Disposa
 			(item: ServerTreeItem) => openServerForm(item.server.type, item.server),
 		),
 		vscode.commands.registerCommand(
+			commandIds.renameGroup,
+			(item: ServerGroupTreeItem) => renameGroup(serverStore, item),
+		),
+		vscode.commands.registerCommand(
 			commandIds.deleteServer,
 			(item: ServerTreeItem, selectedItems?: ServerTreeItem[]) => confirmAndDeleteServers(
 				serverStore,
@@ -67,6 +72,31 @@ async function selectAndAddServer(): Promise<void> {
 	if (selection) {
 		await openServerForm(selection.type);
 	}
+}
+
+async function renameGroup(serverStore: ServerStore, item: ServerGroupTreeItem): Promise<void> {
+	const group = await vscode.window.showInputBox({
+		title: 'Rename Group',
+		prompt: 'Enter a new group name',
+		value: item.group,
+		valueSelection: [0, item.group.length],
+		validateInput: value => {
+			const newGroup = value.trim();
+			if (!newGroup) {
+				return 'Group name is required';
+			}
+			if (newGroup !== item.group && serverStore.getGroups().includes(newGroup)) {
+				return 'A group with this name already exists';
+			}
+			return undefined;
+		},
+	});
+	const newGroup = group?.trim();
+	if (!newGroup || newGroup === item.group) {
+		return;
+	}
+
+	await serverStore.renameGroup(item.group, newGroup);
 }
 
 function getSelectedServers(item: ServerTreeItem, selectedItems?: ServerTreeItem[]): Server[] {

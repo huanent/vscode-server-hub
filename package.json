@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "Server Hub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -86,6 +86,11 @@
         "icon": "$(edit)"
       },
       {
+        "command": "server-hub.renameGroup",
+        "title": "Rename",
+        "icon": "$(edit)"
+      },
+      {
         "command": "server-hub.deleteServer",
         "title": "Delete",
         "icon": "$(trash)"
@@ -122,6 +127,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "server-hub.renameGroup",
+          "when": "view == server-hub.servers && viewItem == serverGroup",
+          "group": "1_modification"
+        },
         {
           "command": "server-hub.connectServer",
           "when": "view == server-hub.servers && (viewItem == sshServer || viewItem == mysqlServer)",

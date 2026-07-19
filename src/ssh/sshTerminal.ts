@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs/promises';
+import * as os from 'os';
 import * as path from 'path';
 import { Client, ClientChannel, FileEntryWithStats, SFTPWrapper } from 'ssh2';
 import { RemoteMetricsFormatter, RemoteMetricsReader } from './remoteMetrics';
@@ -7,11 +9,12 @@ import { ServerCredentials } from '../servers/serverStore';
 import { codiconsDistUri, createNonce, escapeHtml } from '../webview/webviewUtils';
 
 interface SshWebviewMessage {
-	type: 'input' | 'resize' | 'ready' | 'sftpList';
+	type: 'input' | 'resize' | 'ready' | 'sftpList' | 'sftpDelete' | 'sftpDownload' | 'sftpUpload' | 'sftpCopyPath' | 'sftpCreateDirectory' | 'sftpProperties';
 	data?: unknown;
 	rows?: unknown;
 	columns?: unknown;
 	path?: unknown;
+	isDirectory?: unknown;
 }
 
 const metricsRefreshIntervalMs = 5000;
@@ -90,6 +93,38 @@ class SshWebviewSession {
 		}
 		if (message.type === 'sftpList' && typeof message.path === 'string') {
 			void this.loadSftpDirectory(message.path);
+			return;
+		}
+		if (
+			message.type === 'sftpDownload'
+			&& typeof message.path === 'string'
+			&& typeof message.isDirectory === 'boolean'
+		) {
+			void this.downloadSftpEntry(message.path, message.isDirectory);
+			return;
+		}
+		if (message.type === 'sftpUpload' && typeof message.path === 'string') {
+			void this.uploadSftpFiles(message.path);
+			return;
+		}
+		if (message.type === 'sftpCreateDirectory' && typeof message.path === 'string') {
+			void this.createSftpDirectory(message.path);
+			return;
+		}
+		if (
+			message.type === 'sftpDelete'
+			&& typeof message.path === 'string'
+			&& typeof message.isDirectory === 'boolean'
+		) {
+			void this.deleteSftpEntry(message.path, message.isDirectory);
+			return;
+		}
+		if (message.type === 'sftpCopyPath' && typeof message.path === 'string') {
+			void vscode.env.clipboard.writeText(message.path);
+			return;
+		}
+		if (message.type === 'sftpProperties' && typeof message.path === 'string') {
+			void this.showSftpProperties(message.path);
 			return;
 		}
 		if (
@@ -197,6 +232,250 @@ class SshWebviewSession {
 			this.postMessage({ type: 'sftpError' });
 			void vscode.window.showErrorMessage(`Could not load SFTP directory: ${message}`);
 		}
+	}
+
+	private async downloadSftpEntry(remotePath: string, isDirectory: boolean): Promise<void> {
+		try {
+			const sftp = await this.getSftp();
+			if (isDirectory) {
+				const destinations = await vscode.window.showOpenDialog({
+					title: `Download ${path.posix.basename(remotePath)} To`,
+					defaultUri: vscode.Uri.file(os.homedir()),
+					canSelectFiles: false,
+					canSelectFolders: true,
+					canSelectMany: false,
+				});
+				if (!destinations?.length) {
+					return;
+				}
+				await this.downloadSftpDirectory(sftp, remotePath, destinations[0].fsPath);
+			} else {
+				const destination = await vscode.window.showSaveDialog({
+					title: 'Download SFTP File',
+					defaultUri: vscode.Uri.file(path.join(os.homedir(), path.posix.basename(remotePath))),
+				});
+				if (!destination) {
+					return;
+				}
+				await vscode.window.withProgress({
+					location: vscode.ProgressLocation.Notification,
+					title: `Downloading ${path.posix.basename(remotePath)}`,
+				}, progress => this.transferFile(
+					(progressStep, done) => sftp.fastGet(remotePath, destination.fsPath, { step: progressStep }, done),
+					progress,
+				));
+			}
+			void vscode.window.showInformationMessage(`Downloaded ${path.posix.basename(remotePath)}.`);
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not download item: ${this.errorMessage(error)}`);
+		}
+	}
+
+	private async downloadSftpDirectory(sftp: SFTPWrapper, remotePath: string, destinationRoot: string): Promise<void> {
+		const files = await this.collectSftpFiles(sftp, remotePath);
+		const localRoot = path.join(destinationRoot, path.posix.basename(remotePath));
+		const totalSize = files.reduce((total, file) => total + file.size, 0);
+		await fs.mkdir(localRoot, { recursive: true });
+		await vscode.window.withProgress({
+			location: vscode.ProgressLocation.Notification,
+			title: `Downloading ${path.posix.basename(remotePath)}`,
+		}, async progress => {
+			let completedSize = 0;
+			for (const file of files) {
+				const relativePath = path.posix.relative(remotePath, file.remotePath);
+				const localPath = path.join(localRoot, ...relativePath.split('/'));
+				await fs.mkdir(path.dirname(localPath), { recursive: true });
+				await this.transferFile(
+					(progressStep, done) => sftp.fastGet(file.remotePath, localPath, { step: progressStep }, done),
+					progress,
+					totalSize,
+					completedSize,
+				);
+				completedSize += file.size;
+			}
+		});
+	}
+
+	private async collectSftpFiles(sftp: SFTPWrapper, remoteDirectory: string): Promise<Array<{ remotePath: string; size: number }>> {
+		const entries = await new Promise<FileEntryWithStats[]>((resolve, reject) => {
+			sftp.readdir(remoteDirectory, (error, list) => error ? reject(error) : resolve(list));
+		});
+		const files: Array<{ remotePath: string; size: number }> = [];
+		for (const entry of entries) {
+			if (entry.filename === '.' || entry.filename === '..') {
+				continue;
+			}
+			const remotePath = path.posix.join(remoteDirectory, entry.filename);
+			if (entry.attrs.isDirectory()) {
+				files.push(...await this.collectSftpFiles(sftp, remotePath));
+			} else {
+				files.push({ remotePath, size: entry.attrs.size });
+			}
+		}
+		return files;
+	}
+
+	private async uploadSftpFiles(remoteDirectory: string): Promise<void> {
+		const sources = await vscode.window.showOpenDialog({
+			title: `Upload Files to ${remoteDirectory}`,
+			defaultUri: vscode.Uri.file(os.homedir()),
+			canSelectFiles: true,
+			canSelectFolders: false,
+			canSelectMany: true,
+		});
+		if (!sources?.length) {
+			return;
+		}
+
+		try {
+			const sftp = await this.getSftp();
+			const sizes = await Promise.all(sources.map(async source => (await fs.stat(source.fsPath)).size));
+			const totalSize = sizes.reduce((total, size) => total + size, 0);
+			await vscode.window.withProgress({
+				location: vscode.ProgressLocation.Notification,
+				title: sources.length === 1 ? `Uploading ${path.basename(sources[0].fsPath)}` : `Uploading ${sources.length} files`,
+			}, async progress => {
+				let completedSize = 0;
+				for (let index = 0; index < sources.length; index++) {
+					const source = sources[index];
+					const remotePath = path.posix.join(remoteDirectory, path.basename(source.fsPath));
+					await this.transferFile(
+						(progressStep, done) => sftp.fastPut(source.fsPath, remotePath, { step: progressStep }, done),
+						progress,
+						totalSize,
+						completedSize,
+					);
+					completedSize += sizes[index];
+				}
+			});
+			void vscode.window.showInformationMessage(`Uploaded ${sources.length} file${sources.length === 1 ? '' : 's'}.`);
+			await this.loadSftpDirectory(remoteDirectory);
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not upload file: ${this.errorMessage(error)}`);
+		}
+	}
+
+	private async createSftpDirectory(remoteDirectory: string): Promise<void> {
+		const name = await vscode.window.showInputBox({
+			title: `New Folder in ${remoteDirectory}`,
+			prompt: 'Enter a folder name',
+			validateInput: value => {
+				const folderName = value.trim();
+				if (!folderName) {
+					return 'Folder name is required';
+				}
+				if (folderName === '.' || folderName === '..' || folderName.includes('/') || folderName.includes('\\')) {
+					return 'Folder name cannot contain path separators';
+				}
+				return undefined;
+			},
+		});
+		const folderName = name?.trim();
+		if (!folderName) {
+			return;
+		}
+
+		try {
+			const sftp = await this.getSftp();
+			const remotePath = path.posix.join(remoteDirectory, folderName);
+			await new Promise<void>((resolve, reject) => sftp.mkdir(remotePath, error => error ? reject(error) : resolve()));
+			await this.loadSftpDirectory(remoteDirectory);
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not create folder: ${this.errorMessage(error)}`);
+		}
+	}
+
+	private async showSftpProperties(remotePath: string): Promise<void> {
+		try {
+			const sftp = await this.getSftp();
+			const stats = await new Promise<import('ssh2').Stats>((resolve, reject) => {
+				sftp.stat(remotePath, (error, result) => error ? reject(error) : resolve(result));
+			});
+			const type = stats.isDirectory()
+				? 'Folder'
+				: stats.isFile()
+					? 'File'
+					: stats.isSymbolicLink()
+						? 'Symbolic Link'
+						: 'Other';
+			const permissions = (stats.mode & 0o7777).toString(8).padStart(4, '0');
+			const detail = [
+				`Path: ${remotePath}`,
+				`Type: ${type}`,
+				`Size: ${stats.size} bytes`,
+				`Permissions: ${permissions}`,
+				`UID: ${stats.uid}`,
+				`GID: ${stats.gid}`,
+				`Accessed: ${new Date(stats.atime * 1000).toLocaleString()}`,
+				`Modified: ${new Date(stats.mtime * 1000).toLocaleString()}`,
+			].join('\n');
+			await vscode.window.showInformationMessage(
+				`Properties: ${path.posix.basename(remotePath) || remotePath}`,
+				{ modal: true, detail },
+			);
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not load properties: ${this.errorMessage(error)}`);
+		}
+	}
+
+	private async deleteSftpEntry(remotePath: string, isDirectory: boolean): Promise<void> {
+		const name = path.posix.basename(remotePath);
+		const confirmation = await vscode.window.showWarningMessage(
+			`Delete ${isDirectory ? 'folder' : 'file'} “${name}”?`,
+			{ modal: true },
+			'Delete',
+		);
+		if (confirmation !== 'Delete') {
+			return;
+		}
+
+		try {
+			const sftp = await this.getSftp();
+			await this.removeSftpEntry(sftp, remotePath, isDirectory);
+			await this.loadSftpDirectory(path.posix.dirname(remotePath));
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not delete ${name}: ${this.errorMessage(error)}`);
+		}
+	}
+
+	private async removeSftpEntry(sftp: SFTPWrapper, remotePath: string, isDirectory: boolean): Promise<void> {
+		if (!isDirectory) {
+			await new Promise<void>((resolve, reject) => sftp.unlink(remotePath, error => error ? reject(error) : resolve()));
+			return;
+		}
+
+		const entries = await new Promise<FileEntryWithStats[]>((resolve, reject) => {
+			sftp.readdir(remotePath, (error, list) => error ? reject(error) : resolve(list));
+		});
+		for (const entry of entries) {
+			if (entry.filename === '.' || entry.filename === '..') {
+				continue;
+			}
+			await this.removeSftpEntry(sftp, path.posix.join(remotePath, entry.filename), entry.attrs.isDirectory());
+		}
+		await new Promise<void>((resolve, reject) => sftp.rmdir(remotePath, error => error ? reject(error) : resolve()));
+	}
+
+	private transferFile(
+		start: (step: (total: number, chunkSize: number, fileSize: number) => void, done: (error?: Error | null) => void) => void,
+		progress: vscode.Progress<{ increment?: number; message?: string }>,
+		totalSize?: number,
+		completedSize = 0,
+	): Promise<void> {
+		return new Promise((resolve, reject) => {
+			let lastReported = completedSize;
+			start((transferred, _chunkSize, fileSize) => {
+				const overallSize = totalSize ?? fileSize;
+				const current = completedSize + transferred;
+				const increment = overallSize > 0 ? ((current - lastReported) / overallSize) * 100 : 0;
+				lastReported = current;
+				progress.report({ increment });
+			}, error => error ? reject(error) : resolve());
+		});
+	}
+
+	private errorMessage(error: unknown): string {
+		return error instanceof Error ? error.message : String(error);
 	}
 
 	private getSftp(): Promise<SFTPWrapper> {
@@ -321,7 +600,8 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		#terminal { width: 100%; height: 100%; }
 		.sftp-panel { display: none; min-width: 0; min-height: 0; border-left: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); user-select: none; }
 		.workspace.sftp-visible .sftp-panel { display: grid; grid-template-rows: 38px 30px minmax(0, 1fr); }
-		.sftp-toolbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 4px 0 4px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+		.sftp-toolbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding: 4px 0 4px 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+		.sftp-toolbar-actions { position: relative; }
 		.icon-button { display: inline-grid; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; place-items: center; color: var(--vscode-icon-foreground); background: transparent; cursor: pointer; }
 		.icon-button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
 		.icon-button:disabled { opacity: 0.4; cursor: default; }
@@ -335,6 +615,7 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		.sftp-list { height: 100%; padding: 4px 0 4px 4px; overflow: auto; }
 		.sftp-entry { min-height: 30px; padding: 0 6px; border-radius: 3px; cursor: default; }
 		.sftp-entry:hover { color: var(--vscode-list-hoverForeground); background: var(--vscode-list-hoverBackground); }
+		.sftp-entry.selected { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
 		.sftp-name { display: flex; min-width: 0; align-items: center; gap: 7px; }
 		.sftp-name .codicon { color: var(--vscode-symbolIcon-fileForeground, var(--vscode-icon-foreground)); }
 		.sftp-name .folder { color: var(--vscode-symbolIcon-folderForeground, var(--vscode-icon-foreground)); }
@@ -344,6 +625,12 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		.sftp-status.loading { background: color-mix(in srgb, var(--vscode-editor-background) 65%, transparent); }
 		.sftp-status .codicon { color: var(--vscode-progressBar-background); font-size: 16px; }
 		.sftp-status[hidden] { display: none; }
+		.context-menu { position: fixed; z-index: 10; min-width: 170px; padding: 4px; border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border)); border-radius: 4px; color: var(--vscode-menu-foreground); background: var(--vscode-menu-background); box-shadow: 0 2px 8px var(--vscode-widget-shadow); }
+		.toolbar-menu { position: absolute; top: 30px; right: 0; }
+		.context-menu[hidden] { display: none; }
+		.context-menu button { display: grid; grid-template-columns: 20px 1fr; align-items: center; width: 100%; min-height: 26px; padding: 3px 8px; border: 0; border-radius: 3px; color: inherit; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+		.context-menu button:hover { color: var(--vscode-menu-selectionForeground); background: var(--vscode-menu-selectionBackground); }
+		.context-menu .danger { color: var(--vscode-errorForeground); }
 		.connection-status { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; pointer-events: none; }
 		.connection-status[hidden] { display: none; }
 		.status-content { display: grid; grid-template-columns: 18px auto; align-items: center; gap: 5px 12px; max-width: min(520px, calc(100% - 32px)); }
@@ -382,6 +669,14 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 				<button id="sftpUpButton" class="icon-button" type="button" title="Parent directory" aria-label="Parent directory"><i class="codicon codicon-arrow-up"></i></button>
 				<input id="sftpPath" class="sftp-path" type="text" aria-label="Remote path" spellcheck="false">
 				<button id="sftpRefreshButton" class="icon-button" type="button" title="Refresh" aria-label="Refresh"><i class="codicon codicon-refresh"></i></button>
+				<div class="sftp-toolbar-actions">
+					<button id="sftpMoreButton" class="icon-button" type="button" title="More actions" aria-label="More actions" aria-haspopup="menu" aria-expanded="false"><i class="codicon codicon-ellipsis"></i></button>
+					<div id="sftpToolbarMenu" class="context-menu toolbar-menu" role="menu" hidden>
+						<button id="sftpCreateDirectoryButton" type="button" role="menuitem"><i class="codicon codicon-new-folder"></i><span>New Folder</span></button>
+						<button id="sftpUploadButton" type="button" role="menuitem"><i class="codicon codicon-cloud-upload"></i><span>Upload Files</span></button>
+						<button id="sftpPropertiesButton" type="button" role="menuitem"><i class="codicon codicon-info"></i><span>Properties</span></button>
+					</div>
+				</div>
 			</header>
 			<div class="sftp-header"><span>Name</span><span>Size</span><span>Modified</span></div>
 			<div class="sftp-content">
@@ -390,6 +685,7 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 			</div>
 		</aside>
 	</main>
+	<div id="sftpContextMenu" class="context-menu" role="menu" hidden></div>
 	<script nonce="${nonce}" src="${xtermJsUri}"></script>
 	<script nonce="${nonce}" src="${fitAddonJsUri}"></script>
 	<script nonce="${nonce}">
@@ -404,6 +700,12 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		const sftpStatus = document.getElementById('sftpStatus');
 		const sftpUpButton = document.getElementById('sftpUpButton');
 		const sftpRefreshButton = document.getElementById('sftpRefreshButton');
+		const sftpMoreButton = document.getElementById('sftpMoreButton');
+		const sftpToolbarMenu = document.getElementById('sftpToolbarMenu');
+		const sftpCreateDirectoryButton = document.getElementById('sftpCreateDirectoryButton');
+		const sftpUploadButton = document.getElementById('sftpUploadButton');
+		const sftpPropertiesButton = document.getElementById('sftpPropertiesButton');
+		const sftpContextMenu = document.getElementById('sftpContextMenu');
 		let currentSftpPath = '.';
 		let parentSftpPath = null;
 		const metrics = {
@@ -453,6 +755,28 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		});
 		sftpUpButton.addEventListener('click', () => { if (parentSftpPath) loadSftp(parentSftpPath); });
 		sftpRefreshButton.addEventListener('click', () => loadSftp(currentSftpPath));
+		sftpMoreButton.addEventListener('click', event => {
+			event.stopPropagation();
+			const visible = sftpToolbarMenu.hidden;
+			hideSftpContextMenu();
+			sftpToolbarMenu.hidden = !visible;
+			sftpMoreButton.setAttribute('aria-expanded', String(visible));
+		});
+		sftpCreateDirectoryButton.addEventListener('click', event => {
+			event.stopPropagation();
+			hideSftpToolbarMenu();
+			vscode.postMessage({ type: 'sftpCreateDirectory', path: currentSftpPath });
+		});
+		sftpUploadButton.addEventListener('click', event => {
+			event.stopPropagation();
+			hideSftpToolbarMenu();
+			vscode.postMessage({ type: 'sftpUpload', path: currentSftpPath });
+		});
+		sftpPropertiesButton.addEventListener('click', event => {
+			event.stopPropagation();
+			hideSftpToolbarMenu();
+			vscode.postMessage({ type: 'sftpProperties', path: currentSftpPath });
+		});
 		sftpPath.addEventListener('keydown', event => {
 			if (event.key === 'Enter') {
 				const remotePath = sftpPath.value.trim();
@@ -465,6 +789,13 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		});
 		window.addEventListener('focus', () => terminal.focus());
 		window.addEventListener('resize', fitTerminal);
+		document.addEventListener('click', () => { hideSftpContextMenu(); hideSftpToolbarMenu(); });
+		document.addEventListener('keydown', event => {
+			if (event.key === 'Escape') {
+				hideSftpContextMenu();
+				hideSftpToolbarMenu();
+			}
+		});
 
 		requestAnimationFrame(() => {
 			fitTerminal();
@@ -495,6 +826,7 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		}
 
 		function renderSftpEntries(message) {
+			hideSftpContextMenu();
 			currentSftpPath = message.path;
 			parentSftpPath = message.parentPath;
 			sftpPath.disabled = false;
@@ -525,7 +857,52 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 			modified.textContent = new Date(entry.modifiedAt).toLocaleString();
 			item.append(name, size, modified);
 			if (entry.isDirectory) item.addEventListener('dblclick', () => loadSftp(entry.path));
+			item.addEventListener('contextmenu', event => showSftpContextMenu(event, entry, item));
 			return item;
+		}
+
+		function showSftpContextMenu(event, entry, item) {
+			event.preventDefault();
+			event.stopPropagation();
+			document.querySelectorAll('.sftp-entry.selected').forEach(selected => selected.classList.remove('selected'));
+			item.classList.add('selected');
+			const actions = [];
+			if (entry.isDirectory) {
+				actions.push(['new-folder', 'New Folder', () => vscode.postMessage({ type: 'sftpCreateDirectory', path: entry.path })]);
+				actions.push(['cloud-upload', 'Upload Files', () => vscode.postMessage({ type: 'sftpUpload', path: entry.path })]);
+			}
+			actions.push(['cloud-download', 'Download', () => vscode.postMessage({ type: 'sftpDownload', path: entry.path, isDirectory: entry.isDirectory })]);
+			actions.push(['copy', 'Copy Path', () => vscode.postMessage({ type: 'sftpCopyPath', path: entry.path })]);
+			actions.push(['info', 'Properties', () => vscode.postMessage({ type: 'sftpProperties', path: entry.path })]);
+			actions.push(['trash', 'Delete', () => vscode.postMessage({ type: 'sftpDelete', path: entry.path, isDirectory: entry.isDirectory }), true]);
+			sftpContextMenu.replaceChildren(...actions.map(([iconName, label, action, danger]) => {
+				const button = document.createElement('button');
+				button.type = 'button';
+				button.setAttribute('role', 'menuitem');
+				button.classList.toggle('danger', Boolean(danger));
+				const icon = document.createElement('i');
+				icon.className = 'codicon codicon-' + iconName;
+				const text = document.createElement('span');
+				text.textContent = label;
+				button.append(icon, text);
+				button.addEventListener('click', event => { event.stopPropagation(); hideSftpContextMenu(); action(); });
+				return button;
+			}));
+			sftpContextMenu.hidden = false;
+			const width = sftpContextMenu.offsetWidth;
+			const height = sftpContextMenu.offsetHeight;
+			sftpContextMenu.style.left = Math.min(event.clientX, window.innerWidth - width - 4) + 'px';
+			sftpContextMenu.style.top = Math.min(event.clientY, window.innerHeight - height - 4) + 'px';
+		}
+
+		function hideSftpContextMenu() {
+			sftpContextMenu.hidden = true;
+			document.querySelectorAll('.sftp-entry.selected').forEach(selected => selected.classList.remove('selected'));
+		}
+
+		function hideSftpToolbarMenu() {
+			sftpToolbarMenu.hidden = true;
+			sftpMoreButton.setAttribute('aria-expanded', 'false');
 		}
 
 		function showSftpStatus(message, loading) {

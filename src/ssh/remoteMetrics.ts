@@ -52,12 +52,14 @@ if [ -r /proc/stat ]; then
 fi
 
 if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
-	cpu=$(LC_ALL=C top -l 2 -n 0 2>/dev/null | awk -F'\''[:,% ]+'\'' '\''/CPU usage/ { value = $4 + $6 } END { print value }'\'')
+	cpu=$(LC_ALL=C top -l 2 -n 0 2>/dev/null | awk -F'\''[:,% ]+'\'' '\''/CPU usage/ { value = $3 + $5 } END { print value }'\'')
 	page_size=$(pagesize 2>/dev/null)
 	mem_total=$(awk '\''BEGIN { printf "%.0f", '\''"$(sysctl -n hw.memsize 2>/dev/null)"'\'' / 1024 / 1024 }'\'')
 	free_pages=$(vm_stat 2>/dev/null | awk '\''/Pages free/ { gsub("\\.", "", $3); free = $3 } /Pages inactive/ { gsub("\\.", "", $3); inactive = $3 } /Pages speculative/ { gsub("\\.", "", $3); speculative = $3 } END { print free + inactive + speculative }'\'')
 	mem_used=$(awk -v total="$mem_total" -v free="$free_pages" -v page="$page_size" '\''BEGIN { if (total > 0) printf "%.0f", total - ((free * page) / 1024 / 1024) }'\'')
-	disk=$(df -Pk / 2>/dev/null | awk '\''NR == 2 { gsub("%", "", $5); print $5 }'\'')
+	disk_path=$HOME
+	[ -n "$disk_path" ] || disk_path=/
+	disk=$(df -Pk "$disk_path" 2>/dev/null | awk '\''NR == 2 { gsub("%", "", $5); print $5 }'\'')
 	net_if=$(route -n get default 2>/dev/null | awk '\''/interface:/ { print $2; exit }'\'')
 	net=$(netstat -bI "$net_if" 2>/dev/null | awk '\''NR == 2 { print $(NF - 1), $NF; exit }'\'')
 	set -- $net

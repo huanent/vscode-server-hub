@@ -35,6 +35,14 @@ export class ServerStore {
 		this.changeEmitter.fire();
 	}
 
+	async renameGroup(group: string, newGroup: string): Promise<void> {
+		await this.context.globalState.update(
+			serversStateKey,
+			this.getServers().map(server => server.group === group ? { ...server, group: newGroup } : server),
+		);
+		this.changeEmitter.fire();
+	}
+
 	async deleteServer(serverId: string): Promise<void> {
 		await this.deleteServers([serverId]);
 	}
