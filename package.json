@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "Server Hub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -99,6 +99,16 @@
         "command": "server-hub.openSftp",
         "title": "Open SFTP",
         "icon": "$(folder)"
+      },
+      {
+        "command": "server-hub.searchServers",
+        "title": "Search Servers",
+        "icon": "$(search)"
+      },
+      {
+        "command": "server-hub.clearServerSearch",
+        "title": "Clear Server Search",
+        "icon": "$(clear-all)"
       }
     ],
     "menus": {
@@ -110,6 +120,16 @@
         }
       ],
       "view/title": [
+        {
+          "command": "server-hub.clearServerSearch",
+          "when": "view == server-hub.servers && server-hub.serverFilterActive",
+          "group": "navigation@1"
+        },
+        {
+          "command": "server-hub.searchServers",
+          "when": "view == server-hub.servers",
+          "group": "navigation@2"
+        },
         {
           "command": "server-hub.importServers",
           "when": "view == server-hub.servers",

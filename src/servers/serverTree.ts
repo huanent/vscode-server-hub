@@ -15,8 +15,11 @@ export class ServerTreeItem extends vscode.TreeItem {
 }
 
 export class ServerGroupTreeItem extends vscode.TreeItem {
-	constructor(readonly group: string, serverCount: number) {
-		super(group || 'Ungrouped', vscode.TreeItemCollapsibleState.Collapsed);
+	constructor(readonly group: string, serverCount: number, expanded = false) {
+		super(
+			group || 'Ungrouped',
+			expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
+		);
 		this.description = `${serverCount} items`;
 		this.iconPath = new vscode.ThemeIcon('folder');
 		this.contextValue = 'serverGroup';
@@ -29,6 +32,7 @@ export class ServerTreeDataProvider implements vscode.TreeDataProvider<ServerTre
 	private readonly changeEmitter = new vscode.EventEmitter<ServerTreeNode | undefined>();
 	readonly onDidChangeTreeData = this.changeEmitter.event;
 	private readonly storeSubscription: vscode.Disposable;
+	private filter = '';
 
 	constructor(private readonly serverStore: ServerStore) {
 		this.storeSubscription = serverStore.onDidChange(() => this.changeEmitter.fire(undefined));
@@ -38,8 +42,18 @@ export class ServerTreeDataProvider implements vscode.TreeDataProvider<ServerTre
 		return element;
 	}
 
+	getFilter(): string {
+		return this.filter;
+	}
+
+	setFilter(filter: string): void {
+		this.filter = filter.trim().toLocaleLowerCase();
+		void vscode.commands.executeCommand('setContext', 'server-hub.serverFilterActive', Boolean(this.filter));
+		this.changeEmitter.fire(undefined);
+	}
+
 	getChildren(element?: ServerTreeNode): ServerTreeNode[] {
-		const servers = this.serverStore.getServers();
+		const servers = this.serverStore.getServers().filter(server => this.matchesFilter(server));
 		if (element instanceof ServerGroupTreeItem) {
 			return servers
 				.filter(server => server.group === element.group)
@@ -60,8 +74,24 @@ export class ServerTreeDataProvider implements vscode.TreeDataProvider<ServerTre
 			.map(server => new ServerTreeItem(server));
 		const groups = [...groupedServers]
 			.sort(([left], [right]) => left.localeCompare(right))
-			.map(([group, serverCount]) => new ServerGroupTreeItem(group, serverCount));
+			.map(([group, serverCount]) => new ServerGroupTreeItem(group, serverCount, Boolean(this.filter)));
 		return [...groups, ...ungroupedServers];
+	}
+
+	private matchesFilter(server: Server): boolean {
+		if (!this.filter) {
+			return true;
+		}
+
+		return [
+			server.name,
+			server.group,
+			server.type,
+			server.host,
+			server.port.toString(),
+			server.username,
+			server.type === 'mysql' ? server.database : '',
+		].some(value => value.toLocaleLowerCase().includes(this.filter));
 	}
 
 	dispose(): void {

@@ -14,7 +14,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		serverStore,
 		treeDataProvider,
 		registerServerHubEditor(context, serverStore),
-		registerServerCommands(serverStore),
+		registerServerCommands(serverStore, treeDataProvider),
 		vscode.window.createTreeView('server-hub.servers', {
 			treeDataProvider,
 			canSelectMany: true,

@@ -3,7 +3,7 @@ import { openServerConnection, openServerForm } from '../editors/serverHubEditor
 import { Server, ServerType } from '../servers/server';
 import { ServerStore } from '../servers/serverStore';
 import { exportServer, exportServers, importServers } from '../servers/serverTransfer';
-import { ServerGroupTreeItem, ServerTreeItem } from '../servers/serverTree';
+import { ServerGroupTreeItem, ServerTreeDataProvider, ServerTreeItem } from '../servers/serverTree';
 import { toggleSftpForActiveTerminal } from '../ssh/sshTerminal';
 
 const commandIds = {
@@ -17,9 +17,14 @@ const commandIds = {
 	renameGroup: 'server-hub.renameGroup',
 	deleteServer: 'server-hub.deleteServer',
 	openSftp: 'server-hub.openSftp',
+	searchServers: 'server-hub.searchServers',
+	clearServerSearch: 'server-hub.clearServerSearch',
 } as const;
 
-export function registerServerCommands(serverStore: ServerStore): vscode.Disposable {
+export function registerServerCommands(
+	serverStore: ServerStore,
+	treeDataProvider: ServerTreeDataProvider,
+): vscode.Disposable {
 	return vscode.Disposable.from(
 		vscode.commands.registerCommand(commandIds.addServer, selectAndAddServer),
 		vscode.commands.registerCommand(
@@ -61,7 +66,21 @@ export function registerServerCommands(serverStore: ServerStore): vscode.Disposa
 			),
 		),
 		vscode.commands.registerCommand(commandIds.openSftp, toggleSftpForActiveTerminal),
+		vscode.commands.registerCommand(commandIds.searchServers, () => searchServers(treeDataProvider)),
+		vscode.commands.registerCommand(commandIds.clearServerSearch, () => treeDataProvider.setFilter('')),
 	);
+}
+
+async function searchServers(treeDataProvider: ServerTreeDataProvider): Promise<void> {
+	const filter = await vscode.window.showInputBox({
+		title: 'Search Servers',
+		prompt: 'Enter search keywords',
+		value: treeDataProvider.getFilter(),
+		valueSelection: [0, treeDataProvider.getFilter().length],
+	});
+	if (filter !== undefined) {
+		treeDataProvider.setFilter(filter);
+	}
 }
 
 async function selectAndAddServer(): Promise<void> {
