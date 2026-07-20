@@ -1,7 +1,12 @@
 export interface MysqlEditorMessage {
-	type: 'selectDatabase' | 'refresh' | 'openTable';
+	type: 'selectDatabase' | 'refresh' | 'openTable' | 'openSql';
 	database?: unknown;
 	table?: unknown;
+}
+
+export interface MysqlSqlEditorMessage {
+	type: 'executeSql';
+	sql?: unknown;
 }
 
 export interface MysqlTablePreviewMessage {

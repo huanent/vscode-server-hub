@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { configureMysqlEditor, configureMysqlTablePreview } from './mysql/mysqlEditor';
+import { configureMysqlSqlEditor } from './mysql/mysqlSqlEditor';
 import { MysqlServer, Server, ServerType } from './servers/server';
 import { configureServerForm } from './servers/serverForm';
 import { ServerStore } from './servers/serverStore';
@@ -48,9 +49,18 @@ export function registerServerHubEditor(
 				throw new Error(`No password is available for “${server.name}” on this device.`);
 			}
 			if (descriptor.kind === 'mysqlEditor' && server.type === 'mysql') {
-				configureMysqlEditor(context.extensionUri, panel, server, password, (database, table) => {
-					void openMysqlTablePreview(server, database, table);
-				});
+				configureMysqlEditor(
+					context.extensionUri,
+					panel,
+					server,
+					password,
+					(database, table) => void openMysqlTablePreview(server, database, table),
+					database => void openMysqlSqlEditor(server, database),
+				);
+				return;
+			}
+			if (descriptor.kind === 'mysqlSqlEditor' && server.type === 'mysql' && descriptor.database) {
+				configureMysqlSqlEditor(context.extensionUri, panel, server, password, descriptor.database);
 				return;
 			}
 			if (
@@ -92,6 +102,10 @@ export function openServerConnection(server: Server): Thenable<unknown> {
 
 function openMysqlTablePreview(server: MysqlServer, database: string, table: string): Thenable<unknown> {
 	return openEditor({ kind: 'mysqlTablePreview', serverId: server.id, database, table });
+}
+
+function openMysqlSqlEditor(server: MysqlServer, database: string): Thenable<unknown> {
+	return openEditor({ kind: 'mysqlSqlEditor', serverId: server.id, database });
 }
 
 function openEditor(descriptor: EditorDescriptor): Thenable<unknown> {

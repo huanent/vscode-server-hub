@@ -26,6 +26,7 @@ export function configureMysqlEditor(
 	server: MysqlServer,
 	password: string,
 	openTable: (database: string, table: string) => void,
+	openSql: (database: string) => void,
 ): void {
 	panel.title = server.name;
 	panel.webview.options = {
@@ -56,6 +57,10 @@ export function configureMysqlEditor(
 		}
 		if (message.type === 'refresh') {
 			await loadTables();
+			return;
+		}
+		if (message.type === 'openSql' && typeof message.database === 'string' && message.database === currentDatabase) {
+			openSql(currentDatabase);
 			return;
 		}
 		if (
@@ -316,8 +321,9 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		html, body { width: 100%; min-width: 300px; height: 100%; margin: 0; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
 		body { padding: 4px; user-select: none; }
 		button, select { font: inherit; }
-		.toolbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; height: 46px; padding: 0 12px 4px; border-bottom: 1px solid var(--vscode-panel-border); }
+		.toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "database primary view"; align-items: center; gap: 10px; height: 46px; padding: 0 12px 4px; border-bottom: 1px solid var(--vscode-panel-border); }
 		.primary-actions, .view-actions { display: flex; align-items: center; gap: 2px; }
+		.primary-actions { grid-area: primary; }
 		.view-actions { padding: 2px; border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px; background: var(--vscode-input-background); }
 		.icon-button { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; color: var(--vscode-icon-foreground); background: transparent; cursor: pointer; }
 		.icon-button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
@@ -325,7 +331,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.icon-button:disabled { opacity: 0.4; cursor: default; }
 		.icon-button .codicon { font-size: 16px; }
 		.icon-button:focus-visible, select:focus-visible, .table-entry:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-		.database-path { display: flex; min-width: 0; align-items: center; gap: 8px; }
+		.database-path { display: flex; grid-area: database; min-width: 0; align-items: center; gap: 8px; }
 		.connection-name { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--vscode-breadcrumb-foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 		.separator { color: var(--vscode-breadcrumb-foreground); font-size: 14px; }
 		#databaseSelect { min-width: 120px; max-width: 280px; height: 26px; padding: 2px 24px 2px 7px; border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: 4px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); }
@@ -368,13 +374,14 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 </head>
 <body>
 	<header class="toolbar">
-		<div class="primary-actions" role="toolbar" aria-label="Database actions">
-			<button id="refreshButton" class="icon-button" type="button" title="Refresh tables" aria-label="Refresh tables"><i class="codicon codicon-refresh"></i></button>
-		</div>
 		<div class="database-path">
 			<span class="connection-name" title="${escapeHtml(`${server.username}@${server.host}:${server.port}`)}">${escapeHtml(server.name)}</span>
 			<i class="codicon codicon-chevron-right separator" aria-hidden="true"></i>
-			<select id="databaseSelect" aria-label="Database" disabled><option>Connecting...</option></select>
+			<select id="databaseSelect" aria-label="Database" disabled><option></option></select>
+			<button id="refreshButton" class="icon-button" type="button" title="Refresh tables" aria-label="Refresh tables"><i class="codicon codicon-refresh"></i></button>
+		</div>
+		<div class="primary-actions" role="toolbar" aria-label="Database actions">
+			<button id="sqlButton" class="icon-button" type="button" title="Open SQL editor" aria-label="Open SQL editor" disabled><i class="codicon codicon-edit-code"></i></button>
 		</div>
 		<div class="view-actions" role="group" aria-label="View">
 			<button id="listViewButton" class="icon-button selected" type="button" title="List view" aria-label="List view" aria-pressed="true"><i class="codicon codicon-list-unordered"></i></button>
@@ -391,6 +398,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		const previousState = vscode.getState() || {};
 		const elements = {
 			refresh: document.getElementById('refreshButton'),
+			sql: document.getElementById('sqlButton'),
 			database: document.getElementById('databaseSelect'),
 			listView: document.getElementById('listViewButton'),
 			gridView: document.getElementById('gridViewButton'),
@@ -409,6 +417,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			if (message.type === 'tablesError') showStatus(message.message, true);
 		});
 		elements.refresh.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
+		elements.sql.addEventListener('click', () => vscode.postMessage({ type: 'openSql', database: state.database }));
 		elements.database.addEventListener('change', () => {
 			state.database = elements.database.value;
 			saveState();
@@ -427,6 +436,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			state.database = databases.includes(state.database) ? state.database : selectedDatabase;
 			elements.database.value = state.database;
 			elements.database.disabled = databases.length === 0;
+			elements.sql.disabled = databases.length === 0;
 			if (state.database !== selectedDatabase) vscode.postMessage({ type: 'selectDatabase', database: state.database });
 			saveState();
 		}

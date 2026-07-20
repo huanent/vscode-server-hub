@@ -3,7 +3,7 @@ import { ServerType } from '../servers/server';
 
 export const serverHubEditorViewType = 'server-hub.editor';
 
-export type EditorKind = 'serverForm' | 'sshTerminal' | 'mysqlEditor' | 'mysqlTablePreview';
+export type EditorKind = 'serverForm' | 'sshTerminal' | 'mysqlEditor' | 'mysqlTablePreview' | 'mysqlSqlEditor';
 
 export interface EditorDescriptor {
 	kind: EditorKind;
@@ -48,5 +48,6 @@ function isEditorKind(value: string | null): value is EditorKind {
 	return value === 'serverForm'
 		|| value === 'sshTerminal'
 		|| value === 'mysqlEditor'
-		|| value === 'mysqlTablePreview';
+		|| value === 'mysqlTablePreview'
+		|| value === 'mysqlSqlEditor';
 }
