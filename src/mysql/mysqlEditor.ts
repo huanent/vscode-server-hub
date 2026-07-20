@@ -9,6 +9,7 @@ import {
 } from './types';
 import { createMysqlConnection } from './mysqlConnection';
 import {
+	buildTableFilterClause,
 	displayMysqlValue,
 	mysqlTablePageSizes,
 	normalizeTableInfo,
@@ -221,10 +222,7 @@ export function configureMysqlTablePreview(
 		currentRequest = { page, pageSize, sort, filters };
 		void panel.webview.postMessage({ type: 'tableLoading' });
 		try {
-			const whereClause = filters.length === 0
-				? ''
-				: ` WHERE ${filters.map(() => 'LOCATE(?, CAST(?? AS CHAR)) > 0').join(' AND ')}`;
-			const filterParameters = filters.flatMap(filter => [filter.value, filter.column]);
+			const { clause: whereClause, parameters: filterParameters } = buildTableFilterClause(filters);
 			const [countRows] = await connection.query<RowDataPacket[]>(
 				`SELECT COUNT(*) AS total FROM ??.??${whereClause}`,
 				[database, table, ...filterParameters],
@@ -547,6 +545,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		.error { color: var(--vscode-errorForeground); white-space: pre-wrap; }
 		table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); }
 		th, td { max-width: 420px; height: 28px; overflow: hidden; padding: 5px 10px; border-right: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+		thead { position: relative; z-index: 2; }
 		th { position: sticky; top: 0; z-index: 2; padding: 0; background: var(--vscode-editor-background); font-family: var(--vscode-font-family); font-size: 12px; font-weight: 600; }
 		.column-heading { display: grid; grid-template-columns: minmax(80px, 1fr) auto; align-items: center; min-width: 150px; }
 		.column-name { min-width: 0; padding: 5px 4px 5px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -562,7 +561,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		tr:hover td { background: var(--vscode-list-hoverBackground); }
 		.null { color: var(--vscode-descriptionForeground); font-style: italic; }
 		.action-column, .row-action { position: sticky; right: 0; width: 58px; min-width: 58px; max-width: 58px; padding: 0; text-align: center; }
-		.action-column { z-index: 3; background: transparent; }
+		.action-column { z-index: 1; background: var(--vscode-editor-background); }
 		.row-action { z-index: 1; background: var(--vscode-editor-background); }
 		.row-actions { display: flex; align-items: center; justify-content: center; gap: 2px; background: transparent; }
 		tr:hover .row-action { background: var(--vscode-list-hoverBackground); }

@@ -55,6 +55,24 @@ export function parseTableFilters(value: unknown, columnNames: Set<string>): Mys
 	});
 }
 
+export function buildTableFilterClause(filters: MysqlTableFilter[]): { clause: string; parameters: unknown[] } {
+	if (filters.length === 0) {
+		return { clause: '', parameters: [] };
+	}
+	const clauses: string[] = [];
+	const parameters: unknown[] = [];
+	for (const filter of filters) {
+		if (filter.value === 'NULL') {
+			clauses.push('?? IS NULL');
+			parameters.push(filter.column);
+			continue;
+		}
+		clauses.push('CAST(?? AS CHAR) LIKE ?');
+		parameters.push(filter.column, filter.value.includes('%') ? filter.value : `%${filter.value}%`);
+	}
+	return { clause: ` WHERE ${clauses.join(' AND ')}`, parameters };
+}
+
 export function normalizeTableInfo(row: RowDataPacket): MysqlTableInfo {
 	return {
 		name: String(row.name),
