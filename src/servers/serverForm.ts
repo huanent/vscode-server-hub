@@ -35,7 +35,7 @@ export async function configureServerForm(
 				canSelectMany: false,
 				canSelectFiles: true,
 				canSelectFolders: false,
-				openLabel: 'Select Private Key',
+				openLabel: 'Select',
 				title: 'Select SSH Private Key',
 			});
 			if (!selection?.[0]) {
@@ -124,15 +124,15 @@ function renderServerForm(
 		.password-control { position: relative; }
 		.password-control input { padding-right: 34px; }
 		.password-toggle { position: absolute; top: 0; right: 0; display: grid; place-items: center; width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 0; color: var(--vscode-input-foreground); background: transparent; border: 0; border-radius: 0; opacity: .8; }
-		.password-toggle:hover { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); opacity: 1; }
+		button.password-toggle:hover:not(:disabled) { color: var(--vscode-foreground); background: var(--vscode-toolbar-hoverBackground); opacity: 1; }
 		.auth-tabs { display: inline-flex; justify-self: start; gap: 1px; padding: 2px; background: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px; }
 		.auth-tab { min-width: auto; min-height: 26px; padding: 3px 10px; color: var(--vscode-foreground); background: transparent; font-size: 12px; font-weight: 500; }
-		.auth-tab:hover { background: var(--vscode-toolbar-hoverBackground); }
+		.auth-tab[aria-selected="false"]:hover { background: var(--vscode-toolbar-hoverBackground); }
 		.auth-tab[aria-selected="true"] { color: var(--vscode-button-foreground); background: var(--vscode-button-background); }
 		.auth-tab[aria-selected="true"]:hover { background: var(--vscode-button-hoverBackground); }
 		.field-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 		.file-select { display: inline-flex; align-items: center; gap: 5px; min-width: auto; min-height: 24px; padding: 2px 7px; color: var(--vscode-foreground); background: transparent; font-size: 11px; font-weight: 500; }
-		.file-select:hover { background: var(--vscode-toolbar-hoverBackground); }
+		button.file-select:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
 		[hidden] { display: none !important; }
 		.save-area { display: flex; align-items: center; min-height: 30px; }
 		button { min-width: 76px; min-height: 30px; padding: 5px 12px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); border: 1px solid transparent; border-radius: 3px; font: inherit; font-weight: 600; cursor: pointer; }
