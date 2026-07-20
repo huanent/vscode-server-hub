@@ -638,7 +638,8 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		let sort;
 		let editingRow;
 		let tableMessage;
-		let pendingScrollPosition;
+		let tableBody;
+		let columnHeaders = [];
 		const filters = new Map();
 		let filterTimer;
 		window.addEventListener('message', event => {
@@ -685,28 +686,64 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			previousPage.disabled = currentPage <= 1;
 			nextPage.disabled = currentPage >= totalPages;
 			if (message.columns.length === 0) { renderStatus('No columns'); return; }
+			if (!tableBody) createTable(message.columns);
+			updateSortControls();
+			preserveColumnWidths();
+			tableBody.replaceChildren();
+			for (const row of message.rows) {
+				const tableRow = tableBody.insertRow();
+				for (const value of row.values) {
+					const cell = tableRow.insertCell();
+					if (value === null) { cell.textContent = 'NULL'; cell.className = 'null'; }
+					else { cell.textContent = value; cell.title = value; }
+				}
+				const actionCell = tableRow.insertCell();
+				actionCell.className = 'row-action';
+				const actions = document.createElement('div');
+				actions.className = 'row-actions';
+				const viewButton = document.createElement('button');
+				viewButton.className = 'icon-button';
+				viewButton.type = 'button';
+				viewButton.title = 'View row';
+				viewButton.setAttribute('aria-label', viewButton.title);
+				viewButton.innerHTML = '<i class="codicon codicon-eye"></i>';
+				viewButton.addEventListener('click', () => openRowDialog(row, true));
+				const editButton = document.createElement('button');
+				editButton.className = 'icon-button';
+				editButton.type = 'button';
+				editButton.title = message.canEdit ? 'Edit row' : message.editDisabledReason;
+				editButton.setAttribute('aria-label', editButton.title);
+				editButton.disabled = !message.canEdit;
+				editButton.innerHTML = '<i class="codicon codicon-edit"></i>';
+				editButton.addEventListener('click', () => openRowDialog(row, false));
+				actions.append(viewButton, editButton);
+				actionCell.append(actions);
+			}
+		}
+		function createTable(columns) {
 			const table = document.createElement('table');
 			const head = table.createTHead().insertRow();
-			for (const column of message.columns) {
+			columnHeaders = [];
+			for (const column of columns) {
 				const cell = document.createElement('th');
+				columnHeaders.push(cell);
 				const heading = document.createElement('div');
 				heading.className = 'column-heading';
 				const columnName = document.createElement('span');
 				columnName.className = 'column-name';
 				columnName.textContent = column;
-				const direction = sort?.column === column ? sort.direction : undefined;
 				const sortControls = document.createElement('span');
 				sortControls.className = 'sort-controls';
 				for (const sortDirection of ['asc', 'desc']) {
 					const sortButton = document.createElement('button');
-					const active = direction === sortDirection;
 					sortButton.className = 'column-sort';
 					sortButton.type = 'button';
+					sortButton.dataset.column = column;
+					sortButton.dataset.direction = sortDirection;
 					sortButton.title = (sortDirection === 'asc' ? 'Sort ascending by ' : 'Sort descending by ') + column;
 					sortButton.setAttribute('aria-label', sortButton.title);
-					sortButton.setAttribute('aria-pressed', String(active));
 					const sortIcon = document.createElement('i');
-					sortIcon.className = 'sort-arrow ' + (sortDirection === 'asc' ? 'up' : 'down') + (active ? ' active' : '');
+					sortIcon.className = 'sort-arrow ' + (sortDirection === 'asc' ? 'up' : 'down');
 					sortButton.append(sortIcon);
 					sortButton.addEventListener('click', () => {
 						sort = sort?.column === column && sort.direction === sortDirection ? undefined : { column, direction: sortDirection };
@@ -737,41 +774,23 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			actionHeader.className = 'action-column';
 			actionHeader.title = 'Row actions';
 			head.append(actionHeader);
-			const body = table.createTBody();
-			for (const row of message.rows) {
-				const tableRow = body.insertRow();
-				for (const value of row.values) {
-					const cell = tableRow.insertCell();
-					if (value === null) { cell.textContent = 'NULL'; cell.className = 'null'; }
-					else { cell.textContent = value; cell.title = value; }
-				}
-				const actionCell = tableRow.insertCell();
-				actionCell.className = 'row-action';
-				const actions = document.createElement('div');
-				actions.className = 'row-actions';
-				const viewButton = document.createElement('button');
-				viewButton.className = 'icon-button';
-				viewButton.type = 'button';
-				viewButton.title = 'View row';
-				viewButton.setAttribute('aria-label', viewButton.title);
-				viewButton.innerHTML = '<i class="codicon codicon-eye"></i>';
-				viewButton.addEventListener('click', () => openRowDialog(row, true));
-				const editButton = document.createElement('button');
-				editButton.className = 'icon-button';
-				editButton.type = 'button';
-				editButton.title = message.canEdit ? 'Edit row' : message.editDisabledReason;
-				editButton.setAttribute('aria-label', editButton.title);
-				editButton.disabled = !message.canEdit;
-				editButton.innerHTML = '<i class="codicon codicon-edit"></i>';
-				editButton.addEventListener('click', () => openRowDialog(row, false));
-				actions.append(viewButton, editButton);
-				actionCell.append(actions);
-			}
+			tableBody = table.createTBody();
 			content.replaceChildren(table);
-			if (pendingScrollPosition) {
-				content.scrollLeft = pendingScrollPosition.left;
-				content.scrollTop = pendingScrollPosition.top;
-				pendingScrollPosition = undefined;
+		}
+		function preserveColumnWidths() {
+			for (const header of columnHeaders) {
+				const width = header.getBoundingClientRect().width;
+				if (width > 0) header.style.minWidth = width + 'px';
+			}
+		}
+		function updateSortControls() {
+			for (const sortButton of content.querySelectorAll('.column-sort')) {
+				const active = sort?.column === sortButton.dataset.column && sort.direction === sortButton.dataset.direction;
+				sortButton.setAttribute('aria-pressed', String(active));
+				const sortIcon = sortButton.querySelector('.sort-arrow');
+				if (sortIcon) {
+					sortIcon.classList.toggle('active', active);
+				}
 			}
 		}
 		function openRowDialog(row, readOnly) {
@@ -834,7 +853,6 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			return 'text';
 		}
 		function loadPage(page) {
-			pendingScrollPosition = { left: content.scrollLeft, top: content.scrollTop };
 			previousPage.disabled = true;
 			nextPage.disabled = true;
 			vscode.postMessage({
@@ -849,12 +867,16 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			const element = document.createElement('div');
 			element.className = 'status';
 			element.textContent = message;
+			tableBody = undefined;
+			columnHeaders = [];
 			content.replaceChildren(element);
 		}
 		function renderError(message) {
 			const element = document.createElement('div');
 			element.className = 'status error';
 			element.textContent = message;
+			tableBody = undefined;
+			columnHeaders = [];
 			content.replaceChildren(element);
 			count.textContent = '';
 			pageSize.disabled = false;
