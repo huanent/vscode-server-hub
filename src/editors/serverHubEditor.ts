@@ -79,7 +79,7 @@ export function registerServerHubEditor(
 				);
 				return;
 			}
-			throw new Error('The Server Hub editor resource is invalid.');
+			throw new Error('The ServerHub editor resource is invalid.');
 		},
 	};
 

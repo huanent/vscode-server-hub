@@ -31,7 +31,7 @@ export function parseEditorDescriptor(uri: vscode.Uri): EditorDescriptor {
 	const params = new URLSearchParams(uri.query);
 	const kind = params.get('kind');
 	if (!isEditorKind(kind)) {
-		throw new Error('The Server Hub editor resource has an unknown type.');
+		throw new Error('The ServerHub editor resource has an unknown type.');
 	}
 
 	const serverType = params.get('serverType');

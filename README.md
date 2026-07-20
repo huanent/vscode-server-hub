@@ -1,10 +1,10 @@
-# Server Hub
+# ServerHub
 
-Server Hub keeps SSH and MySQL connections close to your VS Code workspace.
+ServerHub keeps SSH and MySQL connections close to your VS Code workspace.
 
 ## Features
 
-- Dedicated Server Hub view in the Activity Bar.
+- Dedicated ServerHub view in the Activity Bar.
 - Add SSH or MySQL servers from the view title menu.
 - Open interactive SSH sessions using password or private key certificate authentication.
 - Open MySQL connections in an editor, switch databases, and browse table metadata in list or grid view.
@@ -15,7 +15,7 @@ Server Hub keeps SSH and MySQL connections close to your VS Code workspace.
 
 ## Usage
 
-1. Open Server Hub from the Activity Bar.
+1. Open ServerHub from the Activity Bar.
 2. Select the add button in the Server List title and choose **SSH** or **MySQL**.
 3. Enter the connection details and save the server.
 4. Select the connect button beside the server.

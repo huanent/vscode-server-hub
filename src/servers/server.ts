@@ -100,7 +100,7 @@ export function parseStoredServers(value: unknown): Server[] {
 
 export function parseServerExport(value: unknown): ExportedServer[] {
 	if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3) || !Array.isArray(value.servers)) {
-		throw new Error('The file is not a supported Server Hub export.');
+		throw new Error('The file is not a supported ServerHub export.');
 	}
 
 	const serverIds = new Set<string>();

@@ -1,8 +1,8 @@
 {
   "name": "server-hub",
-  "displayName": "Server Hub",
+  "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -22,7 +22,7 @@
     "customEditors": [
       {
         "viewType": "server-hub.editor",
-        "displayName": "Server Hub",
+        "displayName": "ServerHub",
         "selector": [
           {
             "filenamePattern": "*.server-hub"
@@ -35,7 +35,7 @@
       "activitybar": [
         {
           "id": "server-hub",
-          "title": "Server Hub",
+          "title": "ServerHub",
           "icon": "resources/server.svg"
         }
       ]
@@ -44,7 +44,7 @@
       "server-hub": [
         {
           "id": "server-hub.servers",
-          "name": "Server Hub",
+          "name": "ServerHub",
           "icon": "resources/server.svg"
         }
       ]
