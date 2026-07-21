@@ -153,15 +153,19 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 			return undefined;
 		}
 
+		const textBeforeCursor = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+		const completionContext = getSqlCompletionContext(textBeforeCursor);
 		const items = sqlKeywords.map((keyword, index) => {
 			const item = new vscode.CompletionItem(keyword, vscode.CompletionItemKind.Keyword);
 			item.insertText = keyword;
-			item.sortText = completionSortText(0, index, keyword);
+			const priority = completionContext.preferredKeywords.has(keyword)
+				? completionContext.preferredKeywordPriority
+				: completionContext.keywordPriority;
+			item.sortText = completionSortText(priority, index, keyword);
 			return item;
 		});
 		this.ensureCompletionMetadata(context);
 		const metadata = context.completionMetadata;
-		const textBeforeCursor = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
 		const qualifier = /(?:`([^`]+)`|([A-Za-z_$][\w$]*))\.\s*$/.exec(textBeforeCursor);
 		if (qualifier) {
 			const qualifierName = qualifier[1] ?? qualifier[2];
@@ -175,12 +179,11 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 
 		let tableIndex = 0;
 		let columnIndex = 0;
-		const { tablePriority, columnPriority } = sqlIdentifierPriorities(textBeforeCursor);
 		for (const [table, columns] of metadata?.tables ?? []) {
 			const tableItem = createIdentifierCompletion(
 				table,
 				vscode.CompletionItemKind.Struct,
-				completionSortText(tablePriority, tableIndex++, table),
+				completionSortText(completionContext.tablePriority, tableIndex++, table),
 			);
 			tableItem.detail = `Table in ${context.database}`;
 			items.push(tableItem);
@@ -188,7 +191,7 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 				const columnItem = createIdentifierCompletion(
 					column,
 					vscode.CompletionItemKind.Field,
-					completionSortText(columnPriority, columnIndex++, column),
+					completionSortText(completionContext.columnPriority, columnIndex++, column),
 				);
 				columnItem.detail = `Column in ${table}`;
 				items.push(columnItem);
@@ -427,17 +430,63 @@ function findQualifiedTableColumns(
 	return undefined;
 }
 
-function sqlIdentifierPriorities(textBeforeCursor: string): { tablePriority: number; columnPriority: number } {
+interface SqlCompletionContext {
+	keywordPriority: number;
+	preferredKeywordPriority: number;
+	tablePriority: number;
+	columnPriority: number;
+	preferredKeywords: Set<string>;
+}
+
+function getSqlCompletionContext(textBeforeCursor: string): SqlCompletionContext {
 	const statementText = textBeforeCursor.slice(textBeforeCursor.lastIndexOf(';') + 1);
-	const clauses = statementText.matchAll(/\b(SELECT|FROM|JOIN|UPDATE|INTO|TABLE|DESCRIBE|DESC|SET|WHERE|ON|GROUP|ORDER|HAVING|VALUES)\b/gi);
+	const clauses = statementText.matchAll(/\b(ORDER\s+BY|GROUP\s+BY|SELECT|FROM|JOIN|UPDATE|INTO|TABLE|DESCRIBE|SET|WHERE|ON|HAVING|VALUES)\b/gi);
 	let currentClause: string | undefined;
 	for (const match of clauses) {
-		currentClause = match[1].toUpperCase();
+		currentClause = match[1].toUpperCase().replace(/\s+/g, ' ');
 	}
-	if (currentClause && ['FROM', 'JOIN', 'UPDATE', 'INTO', 'TABLE', 'DESCRIBE', 'DESC'].includes(currentClause)) {
-		return { tablePriority: 1, columnPriority: 2 };
+
+	if (!currentClause) {
+		return sqlCompletionContext(0, 0, 2, 2, ['SELECT', 'INSERT INTO', 'UPDATE', 'DELETE FROM', 'CREATE TABLE']);
 	}
-	return { tablePriority: 2, columnPriority: 1 };
+	if (['FROM', 'JOIN', 'UPDATE', 'INTO', 'TABLE', 'DESCRIBE'].includes(currentClause)) {
+		return sqlCompletionContext(3, 1, 0, 2, ['JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'WHERE', 'SET', 'VALUES']);
+	}
+	if (currentClause === 'SELECT') {
+		return sqlCompletionContext(3, 1, 2, 0, ['FROM', 'AS', 'DISTINCT']);
+	}
+	if (currentClause === 'ORDER BY') {
+		return sqlCompletionContext(3, 1, 2, 0, ['ASC', 'DESC', 'LIMIT', 'OFFSET']);
+	}
+	if (currentClause === 'GROUP BY') {
+		return sqlCompletionContext(3, 1, 2, 0, ['HAVING', 'ORDER BY', 'LIMIT']);
+	}
+	if (['WHERE', 'ON', 'HAVING'].includes(currentClause)) {
+		return sqlCompletionContext(3, 1, 2, 0, ['AND', 'OR', 'IN', 'LIKE', 'BETWEEN', 'IS NULL', 'IS NOT NULL']);
+	}
+	if (currentClause === 'SET') {
+		return sqlCompletionContext(3, 1, 2, 0, ['WHERE']);
+	}
+	if (currentClause === 'VALUES') {
+		return sqlCompletionContext(2, 1, 3, 3, ['NULL']);
+	}
+	return sqlCompletionContext(2, 1, 2, 0, []);
+}
+
+function sqlCompletionContext(
+	keywordPriority: number,
+	preferredKeywordPriority: number,
+	tablePriority: number,
+	columnPriority: number,
+	preferredKeywords: string[],
+): SqlCompletionContext {
+	return {
+		keywordPriority,
+		preferredKeywordPriority,
+		tablePriority,
+		columnPriority,
+		preferredKeywords: new Set(preferredKeywords),
+	};
 }
 
 function errorMessage(error: unknown): string {

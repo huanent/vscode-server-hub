@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -114,6 +114,13 @@
         "command": "server-hub.executeMysqlSql",
         "title": "Execute SQL",
         "icon": "$(play)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "server-hub.executeMysqlSql",
+        "key": "f5",
+        "when": "editorTextFocus && editorLangId == sql && server-hub.mysqlSqlEditorActive"
       }
     ],
     "menus": {
