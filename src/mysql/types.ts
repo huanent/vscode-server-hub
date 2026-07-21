@@ -1,5 +1,5 @@
 export interface MysqlEditorMessage {
-	type: 'selectDatabase' | 'refresh' | 'openTable' | 'openSql';
+	type: 'selectDatabase' | 'refresh' | 'openTable' | 'openSql' | 'createDatabase' | 'deleteDatabase' | 'importDatabase' | 'exportDatabase';
 	database?: unknown;
 	table?: unknown;
 }

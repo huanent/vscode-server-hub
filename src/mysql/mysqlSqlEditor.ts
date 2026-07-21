@@ -4,6 +4,7 @@ import { ServerStore } from '../servers/serverStore';
 import { escapeHtml } from '../webview/webviewUtils';
 import { createMysqlConnection } from './mysqlConnection';
 import { displayMysqlValue } from './tableData';
+import { splitMysqlStatements } from './sqlStatements';
 
 const executeCommandId = 'server-hub.executeMysqlSql';
 const activeContextKey = 'server-hub.mysqlSqlEditorActive';
@@ -123,7 +124,19 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 			const connection = await createMysqlConnection(server, password, context.database);
 			const startedAt = performance.now();
 			try {
-				const [result, fields] = await connection.query(sql);
+				const statements = splitMysqlStatements(sql);
+				if (statements.length === 0) {
+					return;
+				}
+				let queryResult: Awaited<ReturnType<typeof connection.query>> | undefined;
+				for (let index = 0; index < statements.length; index++) {
+					try {
+						queryResult = await connection.query(statements[index]);
+					} catch (error) {
+						throw new Error(`Statement ${index + 1} failed: ${errorMessage(error)}`);
+					}
+				}
+				const [result, fields] = queryResult!;
 				const durationMs = Math.round(performance.now() - startedAt);
 				if (Array.isArray(result)) {
 					this.showRows(

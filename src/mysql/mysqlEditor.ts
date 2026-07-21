@@ -19,6 +19,7 @@ import {
 } from './tableData';
 import { MysqlServer } from '../servers/server';
 import { codiconsDistUri, createNonce, escapeHtml } from '../webview/webviewUtils';
+import { exportMysqlDatabase, importMysqlDatabase } from './mysqlDatabaseTransfer';
 
 export function configureMysqlEditor(
 	extensionUri: vscode.Uri,
@@ -48,6 +49,22 @@ export function configureMysqlEditor(
 	});
 	panel.webview.onDidReceiveMessage(async (message: MysqlEditorMessage) => {
 		if (!connection) {
+			return;
+		}
+		if (message.type === 'createDatabase') {
+			await createDatabase();
+			return;
+		}
+		if (message.type === 'deleteDatabase' && typeof message.database === 'string' && databases.has(message.database)) {
+			await deleteDatabase(message.database);
+			return;
+		}
+		if (message.type === 'importDatabase' && currentDatabase) {
+			await importDatabase();
+			return;
+		}
+		if (message.type === 'exportDatabase' && typeof message.database === 'string' && databases.has(message.database)) {
+			await exportDatabase(message.database);
 			return;
 		}
 		if (message.type === 'selectDatabase' && typeof message.database === 'string' && databases.has(message.database)) {
@@ -83,21 +100,111 @@ export function configureMysqlEditor(
 				await connection.end();
 				return;
 			}
-			const [rows] = await connection.query<RowDataPacket[]>(
-				'SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME',
-			);
-			databases = new Set(rows.map(row => String(row.name)));
-			if (!databases.has(currentDatabase)) {
-				currentDatabase = databases.values().next().value ?? '';
-			}
-			void panel.webview.postMessage({
-				type: 'databases',
-				databases: [...databases],
-				selectedDatabase: currentDatabase,
-			});
+			await loadDatabases();
 			await loadTables();
 		} catch (error) {
 			void panel.webview.postMessage({ type: 'connectionError', message: errorMessage(error) });
+		}
+	}
+
+	async function loadDatabases(preferredDatabase?: string): Promise<void> {
+		if (!connection) {
+			return;
+		}
+		const [rows] = await connection.query<RowDataPacket[]>(
+			'SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA ORDER BY SCHEMA_NAME',
+		);
+		databases = new Set(rows.map(row => String(row.name)));
+		if (preferredDatabase && databases.has(preferredDatabase)) {
+			currentDatabase = preferredDatabase;
+		} else if (!databases.has(currentDatabase)) {
+			currentDatabase = databases.values().next().value ?? '';
+		}
+		void panel.webview.postMessage({
+			type: 'databases',
+			databases: [...databases],
+			selectedDatabase: currentDatabase,
+			forceSelection: Boolean(preferredDatabase),
+		});
+	}
+
+	async function createDatabase(): Promise<void> {
+		if (!connection) {
+			return;
+		}
+		const name = await vscode.window.showInputBox({
+			title: 'Create MySQL Database',
+			prompt: 'Enter a database name',
+			validateInput: value => {
+				const databaseName = value.trim();
+				if (!databaseName) {
+					return 'Database name is required';
+				}
+				if (Buffer.byteLength(databaseName, 'utf8') > 64) {
+					return 'Database name must be 64 bytes or fewer';
+				}
+				if (databases.has(databaseName)) {
+					return 'A database with this name already exists';
+				}
+				return undefined;
+			},
+		});
+		const databaseName = name?.trim();
+		if (!databaseName) {
+			return;
+		}
+		try {
+			await connection.query('CREATE DATABASE ?? CHARACTER SET utf8mb4', [databaseName]);
+			await loadDatabases(databaseName);
+			await loadTables();
+			void vscode.window.showInformationMessage(`Created database “${databaseName}”.`);
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not create database: ${errorMessage(error)}`);
+		}
+	}
+
+	async function deleteDatabase(database: string): Promise<void> {
+		if (!connection) {
+			return;
+		}
+		const confirmation = await vscode.window.showWarningMessage(
+			`Delete database “${database}” and all of its data?`,
+			{ modal: true },
+			'Delete',
+		);
+		if (confirmation !== 'Delete') {
+			return;
+		}
+		try {
+			const deletingCurrentDatabase = database === currentDatabase;
+			await connection.query('DROP DATABASE ??', [database]);
+			await loadDatabases();
+			if (deletingCurrentDatabase) {
+				await loadTables();
+			}
+			void vscode.window.showInformationMessage(`Deleted database “${database}”.`);
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not delete database: ${errorMessage(error)}`);
+		}
+	}
+
+	async function exportDatabase(database: string): Promise<void> {
+		try {
+			await exportMysqlDatabase(server, password, database);
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not export database: ${errorMessage(error)}`);
+		}
+	}
+
+	async function importDatabase(): Promise<void> {
+		const database = currentDatabase;
+		try {
+			const completed = await importMysqlDatabase(server, password, database);
+			if (completed) {
+				await loadTables();
+			}
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not import database: ${errorMessage(error)}`);
 		}
 	}
 
@@ -319,9 +426,9 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		:root { color-scheme: light dark; }
 		* { box-sizing: border-box; }
 		html, body { width: 100%; min-width: 300px; height: 100%; margin: 0; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
-		body { padding: 4px; user-select: none; }
-		button, select { font: inherit; }
-		.toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "database primary view"; align-items: center; gap: 10px; height: 46px; padding: 0 12px 4px; border-bottom: 1px solid var(--vscode-panel-border); }
+		body { display: grid; grid-template-rows: 42px minmax(0, 1fr); padding: 4px; user-select: none; }
+		button { font: inherit; }
+		.toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "database primary view"; align-items: center; gap: 10px; padding: 0 8px; border-bottom: 1px solid var(--vscode-panel-border); }
 		.primary-actions, .view-actions { display: flex; align-items: center; gap: 2px; }
 		.primary-actions { grid-area: primary; }
 		.view-actions { padding: 2px; border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px; background: var(--vscode-input-background); }
@@ -330,12 +437,26 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.icon-button.selected { background: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground)); }
 		.icon-button:disabled { opacity: 0.4; cursor: default; }
 		.icon-button .codicon { font-size: 16px; }
-		.icon-button:focus-visible, select:focus-visible, .table-entry:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+		.icon-button:focus-visible, .database-select:focus-visible, .table-entry:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
 		.database-path { display: flex; grid-area: database; min-width: 0; align-items: center; gap: 8px; }
-		.connection-name { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--vscode-breadcrumb-foreground); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-		.separator { color: var(--vscode-breadcrumb-foreground); font-size: 14px; }
-		#databaseSelect { min-width: 120px; max-width: 280px; height: 26px; padding: 2px 24px 2px 7px; border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: 4px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); }
-		main { height: calc(100% - 46px); overflow: auto; }
+		.connection-name { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+		.workspace { display: grid; min-width: 0; min-height: 0; grid-template-columns: 220px minmax(0, 1fr); }
+		.database-sidebar { display: grid; min-width: 0; min-height: 0; grid-template-rows: 31px minmax(0, 1fr); border-right: 1px solid var(--vscode-panel-border); }
+		.database-header { display: flex; padding: 0 4px 0 10px; align-items: center; color: var(--vscode-descriptionForeground); font-size: 11px; font-weight: 600; text-transform: uppercase; }
+		.database-header-actions { display: flex; margin-left: auto; align-items: center; gap: 1px; }
+		.database-header .icon-button { width: 24px; height: 24px; }
+		.database-list { padding: 4px; overflow: auto; }
+		.database-entry { position: relative; display: grid; width: 100%; height: 28px; grid-template-columns: minmax(0, 1fr) 24px 24px; align-items: center; overflow: hidden; border-radius: 3px; color: var(--vscode-foreground); }
+		.database-entry:hover { color: var(--vscode-list-hoverForeground); background: var(--vscode-list-hoverBackground); }
+		.database-entry.selected { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
+		.database-select { display: grid; min-width: 0; height: 100%; padding: 0 4px 0 7px; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 5px; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+		.database-select .codicon { color: var(--vscode-symbolIcon-namespaceForeground, currentColor); font-size: 14px; }
+		.database-select span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+		.database-item-action { visibility: hidden; width: 22px; height: 22px; color: inherit; }
+		.database-delete { margin-right: 2px; }
+		.database-entry:hover .database-item-action, .database-entry:focus-within .database-item-action { visibility: visible; }
+		.database-entry.selected .database-item-action:hover { background: rgba(255, 255, 255, 0.16); }
+		main { min-width: 0; min-height: 0; overflow: auto; }
 		.column-header, .table-list.list-view .table-entry { display: grid; grid-template-columns: minmax(190px, 1fr) 110px minmax(160px, 210px) 130px; align-items: center; }
 		.column-header { position: sticky; top: 0; z-index: 2; height: 30px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); background: var(--vscode-editor-background); font-size: 12px; }
 		.column-header[hidden] { display: none; }
@@ -368,7 +489,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.table-list.list-view .grid-detail:nth-child(1) .entry-meta, .table-list.list-view .grid-detail:nth-child(2) .entry-meta { text-align: left; }
 		.status { padding: 44px 0; color: var(--vscode-descriptionForeground); text-align: center; }
 		.error { color: var(--vscode-errorForeground); }
-		@media (max-width: 760px) { .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px; } .column-header span:nth-child(3), .table-list.list-view .grid-detail:nth-child(2) { display: none; } .connection-name { display: none; } }
+		@media (max-width: 760px) { .workspace { grid-template-columns: 170px minmax(0, 1fr); } .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px; } .column-header span:nth-child(3), .table-list.list-view .grid-detail:nth-child(2) { display: none; } }
 		@media (max-width: 520px) { .table-list.grid-view { grid-template-columns: minmax(0, 1fr); } }
 	</style>
 </head>
@@ -376,8 +497,6 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 	<header class="toolbar">
 		<div class="database-path">
 			<span class="connection-name" title="${escapeHtml(`${server.username}@${server.host}:${server.port}`)}">${escapeHtml(server.name)}</span>
-			<i class="codicon codicon-chevron-right separator" aria-hidden="true"></i>
-			<select id="databaseSelect" aria-label="Database" disabled><option></option></select>
 			<button id="refreshButton" class="icon-button" type="button" title="Refresh tables" aria-label="Refresh tables"><i class="codicon codicon-refresh"></i></button>
 		</div>
 		<div class="primary-actions" role="toolbar" aria-label="Database actions">
@@ -388,57 +507,108 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			<button id="gridViewButton" class="icon-button" type="button" title="Grid view" aria-label="Grid view" aria-pressed="false"><i class="codicon codicon-layout"></i></button>
 		</div>
 	</header>
-	<main>
-		<div id="columnHeader" class="column-header"><span>Name</span><span>Rows</span><span>Updated</span><span>Data size</span></div>
-		<div id="tableList" class="table-list list-view" role="listbox" aria-label="Tables"></div>
-		<div id="status" class="status" role="status" aria-live="polite">Connecting...</div>
-	</main>
+	<div class="workspace">
+		<aside class="database-sidebar">
+			<div class="database-header">
+				<span>Databases</span>
+				<div class="database-header-actions" role="toolbar" aria-label="Database list actions">
+					<button id="importDatabaseButton" class="icon-button" type="button" title="Import SQL into database" aria-label="Import SQL into database" disabled><i class="codicon codicon-cloud-download"></i></button>
+					<button id="createDatabaseButton" class="icon-button" type="button" title="Create database" aria-label="Create database"><i class="codicon codicon-add"></i></button>
+				</div>
+			</div>
+			<div id="databaseList" class="database-list" role="listbox" aria-label="Databases"></div>
+		</aside>
+		<main>
+			<div id="columnHeader" class="column-header"><span>Name</span><span>Rows</span><span>Updated</span><span>Data size</span></div>
+			<div id="tableList" class="table-list list-view" role="listbox" aria-label="Tables"></div>
+			<div id="status" class="status" role="status" aria-live="polite">Connecting...</div>
+		</main>
+	</div>
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
 		const previousState = vscode.getState() || {};
 		const elements = {
 			refresh: document.getElementById('refreshButton'),
+			createDatabase: document.getElementById('createDatabaseButton'),
+			importDatabase: document.getElementById('importDatabaseButton'),
 			sql: document.getElementById('sqlButton'),
-			database: document.getElementById('databaseSelect'),
+			databaseList: document.getElementById('databaseList'),
 			listView: document.getElementById('listViewButton'),
 			gridView: document.getElementById('gridViewButton'),
 			columnHeader: document.getElementById('columnHeader'),
 			tableList: document.getElementById('tableList'),
 			status: document.getElementById('status')
 		};
-		const state = { database: previousState.database || ${JSON.stringify(server.database)}, tables: [], view: previousState.view === 'grid' ? 'grid' : 'list' };
+		const state = { database: previousState.database || ${JSON.stringify(server.database)}, databases: [], tables: [], view: previousState.view === 'grid' ? 'grid' : 'list' };
 
 		window.addEventListener('message', event => {
 			const message = event.data;
-			if (message.type === 'databases') renderDatabases(message.databases, message.selectedDatabase);
+			if (message.type === 'databases') renderDatabases(message.databases, message.selectedDatabase, message.forceSelection);
 			if (message.type === 'tablesLoading') showStatus('Loading tables...');
 			if (message.type === 'tables') { state.database = message.database; state.tables = message.tables; render(); }
 			if (message.type === 'connectionError') showStatus(message.message, true);
 			if (message.type === 'tablesError') showStatus(message.message, true);
 		});
 		elements.refresh.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
+		elements.createDatabase.addEventListener('click', () => vscode.postMessage({ type: 'createDatabase' }));
+		elements.importDatabase.addEventListener('click', () => vscode.postMessage({ type: 'importDatabase' }));
 		elements.sql.addEventListener('click', () => vscode.postMessage({ type: 'openSql', database: state.database }));
-		elements.database.addEventListener('change', () => {
-			state.database = elements.database.value;
-			saveState();
-			vscode.postMessage({ type: 'selectDatabase', database: state.database });
-		});
 		elements.listView.addEventListener('click', () => setView('list'));
 		elements.gridView.addEventListener('click', () => setView('grid'));
 
-		function renderDatabases(databases, selectedDatabase) {
-			elements.database.replaceChildren(...databases.map(database => {
-				const option = document.createElement('option');
-				option.value = database;
-				option.textContent = database;
-				return option;
-			}));
-			state.database = databases.includes(state.database) ? state.database : selectedDatabase;
-			elements.database.value = state.database;
-			elements.database.disabled = databases.length === 0;
-			elements.sql.disabled = databases.length === 0;
+		function renderDatabases(databases, selectedDatabase, forceSelection) {
+			state.databases = databases;
+			state.database = !forceSelection && databases.includes(state.database) ? state.database : selectedDatabase;
+			elements.databaseList.replaceChildren(...databases.map(createDatabaseEntry));
+			setDatabaseActionsDisabled(databases.length === 0);
 			if (state.database !== selectedDatabase) vscode.postMessage({ type: 'selectDatabase', database: state.database });
 			saveState();
+		}
+
+		function createDatabaseEntry(database) {
+			const item = document.createElement('div');
+			item.className = 'database-entry';
+			item.classList.toggle('selected', database === state.database);
+			item.dataset.database = database;
+			item.setAttribute('role', 'option');
+			item.setAttribute('aria-selected', String(database === state.database));
+			const selectButton = document.createElement('button');
+			selectButton.className = 'database-select';
+			selectButton.type = 'button';
+			selectButton.title = database;
+			const icon = document.createElement('i');
+			icon.className = 'codicon codicon-database';
+			const label = document.createElement('span');
+			label.textContent = database;
+			selectButton.append(icon, label);
+			selectButton.addEventListener('click', () => {
+				if (database === state.database) return;
+				state.database = database;
+				updateDatabaseSelection();
+				saveState();
+				vscode.postMessage({ type: 'selectDatabase', database });
+			});
+			const exportButton = document.createElement('button');
+			exportButton.className = 'icon-button database-item-action database-export';
+			exportButton.type = 'button';
+			exportButton.title = 'Export ' + database;
+			exportButton.setAttribute('aria-label', exportButton.title);
+			exportButton.innerHTML = '<i class="codicon codicon-cloud-upload"></i>';
+			exportButton.addEventListener('click', () => vscode.postMessage({ type: 'exportDatabase', database }));
+			const deleteButton = document.createElement('button');
+			deleteButton.className = 'icon-button database-item-action database-delete';
+			deleteButton.type = 'button';
+			deleteButton.title = 'Delete ' + database;
+			deleteButton.setAttribute('aria-label', deleteButton.title);
+			deleteButton.innerHTML = '<i class="codicon codicon-trash"></i>';
+			deleteButton.addEventListener('click', () => vscode.postMessage({ type: 'deleteDatabase', database }));
+			item.append(selectButton, exportButton, deleteButton);
+			return item;
+		}
+
+		function setDatabaseActionsDisabled(disabled) {
+			elements.importDatabase.disabled = disabled;
+			elements.sql.disabled = disabled;
 		}
 
 		function render() {
@@ -447,6 +617,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			elements.columnHeader.hidden = state.view !== 'list';
 			elements.status.hidden = state.tables.length !== 0;
 			if (state.tables.length === 0) elements.status.textContent = 'No tables in this database.';
+			updateDatabaseSelection();
 			updateViewButtons();
 			saveState();
 		}
@@ -495,6 +666,13 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		}
 
 		function setView(view) { state.view = view; render(); }
+		function updateDatabaseSelection() {
+			for (const item of elements.databaseList.querySelectorAll('.database-entry')) {
+				const selected = item.dataset.database === state.database;
+				item.classList.toggle('selected', selected);
+				item.setAttribute('aria-selected', String(selected));
+			}
+		}
 		function updateViewButtons() {
 			const isList = state.view === 'list';
 			elements.listView.classList.toggle('selected', isList);
