@@ -401,6 +401,10 @@ export function configureMysqlTablePreview(
 			await updateRow(message.rowId, message.values);
 			return;
 		}
+		if (message.type === 'deleteRow') {
+			await deleteRow(message.rowId);
+			return;
+		}
 		if (message.type === 'insertRow') {
 			await insertRow(message.values);
 			return;
@@ -542,6 +546,42 @@ export function configureMysqlTablePreview(
 			await loadPage(currentRequest.page, currentRequest.pageSize, currentRequest.sort, currentRequest.filters);
 		} catch (error) {
 			void panel.webview.postMessage({ type: 'rowUpdateError', message: errorMessage(error) });
+		}
+	}
+
+	async function deleteRow(rowIdValue: unknown): Promise<void> {
+		if (!connection || typeof rowIdValue !== 'string' || primaryKeyColumns.length === 0) {
+			return;
+		}
+		const originalRow = pageRows.get(rowIdValue);
+		if (!originalRow) {
+			return;
+		}
+		const confirmation = await vscode.window.showWarningMessage(
+			`Delete this row from “${database}.${table}”?`,
+			{ modal: true },
+			'Delete',
+		);
+		if (confirmation !== 'Delete') {
+			return;
+		}
+		try {
+			const whereClause = primaryKeyColumns.map(() => '?? <=> ?').join(' AND ');
+			const parameters = [
+				database,
+				table,
+				...primaryKeyColumns.flatMap(column => [column, originalRow[column]]),
+			];
+			const [result] = await connection.query<ResultSetHeader>(
+				`DELETE FROM ??.?? WHERE ${whereClause} LIMIT 1`,
+				parameters,
+			);
+			if (result.affectedRows !== 1) {
+				throw new Error('The row was not deleted. It may have already been changed or deleted.');
+			}
+			await loadPage(currentRequest.page, currentRequest.pageSize, currentRequest.sort, currentRequest.filters);
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not delete row: ${errorMessage(error)}`);
 		}
 	}
 
@@ -1277,7 +1317,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		let totalPages = 1;
 		let sort;
 		let editingRow;
-		let dialogMode = 'view';
+		let dialogMode = 'edit';
 		let tableMessage;
 		let tableBody;
 		let columnHeaders = [];
@@ -1352,13 +1392,6 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 				actionCell.className = 'row-action';
 				const actions = document.createElement('div');
 				actions.className = 'row-actions';
-				const viewButton = document.createElement('button');
-				viewButton.className = 'icon-button';
-				viewButton.type = 'button';
-				viewButton.title = 'View row';
-				viewButton.setAttribute('aria-label', viewButton.title);
-				viewButton.innerHTML = '<i class="codicon codicon-eye"></i>';
-				viewButton.addEventListener('click', () => openRowDialog(row, true));
 				const editButton = document.createElement('button');
 				editButton.className = 'icon-button';
 				editButton.type = 'button';
@@ -1366,8 +1399,16 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 				editButton.setAttribute('aria-label', editButton.title);
 				editButton.disabled = !message.canEdit;
 				editButton.innerHTML = '<i class="codicon codicon-edit"></i>';
-				editButton.addEventListener('click', () => openRowDialog(row, false));
-				actions.append(viewButton, editButton);
+				editButton.addEventListener('click', () => openRowDialog(row));
+				const deleteButton = document.createElement('button');
+				deleteButton.className = 'icon-button';
+				deleteButton.type = 'button';
+				deleteButton.title = message.canEdit ? 'Delete row' : message.editDisabledReason;
+				deleteButton.setAttribute('aria-label', deleteButton.title);
+				deleteButton.disabled = !message.canEdit;
+				deleteButton.innerHTML = '<i class="codicon codicon-trash"></i>';
+				deleteButton.addEventListener('click', () => vscode.postMessage({ type: 'deleteRow', rowId: row.rowId }));
+				actions.append(editButton, deleteButton);
 				actionCell.append(actions);
 			}
 		}
@@ -1444,18 +1485,18 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 				}
 			}
 		}
-		function openCreateDialog() { openRowDialog(undefined, false, true); }
-		function openRowDialog(row, readOnly, creating = false) {
-			dialogMode = creating ? 'create' : readOnly ? 'view' : 'edit';
-			editingRow = dialogMode === 'edit' ? row : undefined;
-			editDialogTitle.textContent = creating ? 'Create row' : readOnly ? 'View row' : 'Edit row';
+		function openCreateDialog() { openRowDialog(undefined, true); }
+		function openRowDialog(row, creating = false) {
+			dialogMode = creating ? 'create' : 'edit';
+			editingRow = creating ? undefined : row;
+			editDialogTitle.textContent = creating ? 'Create row' : 'Edit row';
 			dialogError.textContent = '';
-			cancelEdit.textContent = readOnly ? 'Close' : 'Cancel';
-			saveEdit.hidden = readOnly;
-			saveEdit.disabled = readOnly;
+			cancelEdit.textContent = 'Cancel';
+			saveEdit.hidden = false;
+			saveEdit.disabled = false;
 			dialogFields.replaceChildren(...tableMessage.columnInfo.filter(column => creating
 				? column.editable && !column.autoIncrement
-				: readOnly || column.editable).map(column => {
+				: column.editable).map(column => {
 				const columnIndex = tableMessage.columns.indexOf(column.name);
 				const value = creating ? '' : row.editValues[columnIndex];
 				const field = document.createElement('label');
@@ -1483,7 +1524,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 					toggles.append(defaultLabel);
 				}
 				let nullToggle;
-				if (column.nullable && !readOnly) {
+				if (column.nullable) {
 					const nullLabel = document.createElement('span');
 					nullLabel.className = 'null-toggle';
 					nullToggle = document.createElement('input');
@@ -1506,9 +1547,9 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 						input.append(option);
 					}
 				} else if (!multiline) input.type = inputType(column.dataType);
-				input.value = readOnly && value === null ? 'NULL' : value ?? '';
+				input.value = value ?? '';
 				const updateInputState = () => {
-					input.disabled = readOnly || Boolean(defaultToggle?.checked) || Boolean(nullToggle?.checked);
+					input.disabled = Boolean(defaultToggle?.checked) || Boolean(nullToggle?.checked);
 					input.required = creating && !column.nullable && !column.hasDefault;
 				};
 				if (defaultToggle) defaultToggle.addEventListener('change', () => {

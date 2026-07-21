@@ -7,7 +7,7 @@ export interface MysqlEditorMessage {
 }
 
 export interface MysqlTablePreviewMessage {
-	type: 'loadPage' | 'updateRow' | 'insertRow';
+	type: 'loadPage' | 'updateRow' | 'insertRow' | 'deleteRow';
 	page?: unknown;
 	pageSize?: unknown;
 	sort?: unknown;
