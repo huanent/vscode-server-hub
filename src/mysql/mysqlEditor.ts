@@ -42,6 +42,7 @@ export function configureMysqlEditor(
 	let tables = new Set<string>();
 	let currentDatabase = server.database;
 	let disposed = false;
+	let pendingTableStatement: { id: string; database: string; sql: string } | undefined;
 
 	panel.onDidDispose(() => {
 		disposed = true;
@@ -80,8 +81,26 @@ export function configureMysqlEditor(
 			openSql(currentDatabase);
 			return;
 		}
-		if (message.type === 'createTable' && typeof message.database === 'string' && message.database === currentDatabase) {
-			await createTable(message.definition);
+		if (message.type === 'loadTableDefinition'
+			&& message.database === currentDatabase
+			&& typeof message.table === 'string'
+			&& tables.has(message.table)) {
+			await loadTableDefinition(message.table);
+			return;
+		}
+		if (message.type === 'previewCreateTable' && typeof message.database === 'string' && message.database === currentDatabase) {
+			previewCreateTable(message.definition);
+			return;
+		}
+		if (message.type === 'previewAlterTable'
+			&& message.database === currentDatabase
+			&& typeof message.table === 'string'
+			&& tables.has(message.table)) {
+			await previewAlterTable(message.table, message.definition);
+			return;
+		}
+		if (message.type === 'confirmTableStatement' && typeof message.confirmationId === 'string') {
+			await confirmTableStatement(message.confirmationId);
 			return;
 		}
 		if (
@@ -244,37 +263,73 @@ export function configureMysqlEditor(
 		}
 	}
 
-	async function createTable(definitionValue: unknown): Promise<void> {
+	async function loadTableDefinition(table: string): Promise<void> {
+		if (!connection || !currentDatabase) {
+			return;
+		}
+		try {
+			const definition = await readTableDefinition(connection, currentDatabase, table);
+			void panel.webview.postMessage({ type: 'tableDefinition', table, definition });
+		} catch (error) {
+			void panel.webview.postMessage({ type: 'tableDefinitionError', message: errorMessage(error) });
+		}
+	}
+
+	function previewCreateTable(definitionValue: unknown): void {
 		if (!connection || !currentDatabase) {
 			return;
 		}
 		try {
 			const definition = parseCreateTableDefinition(definitionValue, tables);
-			const columnSql = definition.columns.map(column => {
-				const length = column.length ? `(${column.length})` : '';
-				const nullable = column.nullable && !column.primaryKey ? ' NULL' : ' NOT NULL';
-				let defaultClause = '';
-				if (column.defaultKind === 'null') {
-					defaultClause = ' DEFAULT NULL';
-				} else if (column.defaultKind === 'currentTimestamp') {
-					defaultClause = ' DEFAULT CURRENT_TIMESTAMP';
-				} else if (column.defaultKind === 'value') {
-					defaultClause = ` DEFAULT ${connection!.escape(column.defaultValue)}`;
-				}
-				return `${escapeMysqlIdentifier(column.name)} ${column.type}${length}${nullable}${defaultClause}${column.autoIncrement ? ' AUTO_INCREMENT' : ''}`;
+			const sql = buildCreateTableSql(definition, currentDatabase, value => connection!.escape(value));
+			pendingTableStatement = { id: crypto.randomUUID(), database: currentDatabase, sql };
+			void panel.webview.postMessage({
+				type: 'tableStatementPreview',
+				confirmationId: pendingTableStatement.id,
+				sql,
 			});
-		const primaryKeys = definition.columns.filter(column => column.primaryKey);
-		if (primaryKeys.length > 0) {
-			columnSql.push(`PRIMARY KEY (${primaryKeys.map(column => escapeMysqlIdentifier(column.name)).join(', ')})`);
+		} catch (error) {
+			pendingTableStatement = undefined;
+			void panel.webview.postMessage({ type: 'tableCreateError', message: errorMessage(error) });
 		}
-		await connection.query(
-			`CREATE TABLE ${escapeMysqlIdentifier(currentDatabase)}.${escapeMysqlIdentifier(definition.name)} (${columnSql.join(', ')}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
-		);
-		await loadTables();
-		void panel.webview.postMessage({ type: 'tableCreated' });
-	} catch (error) {
-		void panel.webview.postMessage({ type: 'tableCreateError', message: errorMessage(error) });
 	}
+
+	async function previewAlterTable(table: string, definitionValue: unknown): Promise<void> {
+		if (!connection || !currentDatabase) {
+			return;
+		}
+		try {
+			const original = await readTableDefinition(connection, currentDatabase, table);
+			const definition = parseCreateTableDefinition(definitionValue, tables, table, new Set(original.columns.map(column => column.name)));
+			const sql = buildAlterTableSql(original, definition, currentDatabase, value => connection!.escape(value));
+			pendingTableStatement = { id: crypto.randomUUID(), database: currentDatabase, sql };
+			void panel.webview.postMessage({
+				type: 'tableStatementPreview',
+				confirmationId: pendingTableStatement.id,
+				sql,
+			});
+		} catch (error) {
+			pendingTableStatement = undefined;
+			void panel.webview.postMessage({ type: 'tableCreateError', message: errorMessage(error) });
+		}
+	}
+
+	async function confirmTableStatement(confirmationId: string): Promise<void> {
+		if (!connection || !pendingTableStatement
+			|| pendingTableStatement.id !== confirmationId
+			|| pendingTableStatement.database !== currentDatabase) {
+			void panel.webview.postMessage({ type: 'tableCreateError', message: 'The SQL preview has expired. Review the form again.' });
+			return;
+		}
+		const { sql } = pendingTableStatement;
+		try {
+			await connection.query(sql);
+			pendingTableStatement = undefined;
+			await loadTables();
+			void panel.webview.postMessage({ type: 'tableStatementExecuted' });
+		} catch (error) {
+			void panel.webview.postMessage({ type: 'tableCreateError', message: errorMessage(error) });
+		}
 	}
 
 	async function loadTables(): Promise<void> {
@@ -563,7 +618,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.database-entry:hover .database-item-action, .database-entry:focus-within .database-item-action { visibility: visible; }
 		.database-entry.selected .database-item-action:hover { background: rgba(255, 255, 255, 0.16); }
 		main { min-width: 0; min-height: 0; overflow: auto; }
-		.column-header, .table-list.list-view .table-entry { display: grid; grid-template-columns: minmax(190px, 1fr) 110px minmax(160px, 210px) 130px 34px; align-items: center; }
+		.column-header, .table-list.list-view .table-entry { display: grid; grid-template-columns: minmax(190px, 1fr) 110px minmax(160px, 210px) 130px 60px; align-items: center; }
 		.column-header { position: sticky; top: 0; z-index: 2; height: 30px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); background: var(--vscode-editor-background); font-size: 12px; }
 		.column-header[hidden] { display: none; }
 		.column-header span:not(:first-child) { text-align: right; }
@@ -578,12 +633,13 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.entry-name span:last-child, .entry-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 		.entry-meta { padding-left: 12px; color: var(--vscode-descriptionForeground); font-size: 12px; text-align: right; }
 		.selected .entry-meta { color: inherit; }
-		.table-delete { width: 26px; height: 26px; justify-self: end; color: inherit; }
+		.table-actions { display: flex; justify-self: end; align-items: center; gap: 2px; }
+		.table-actions .icon-button { width: 26px; height: 26px; color: inherit; }
 		.table-list.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); grid-auto-rows: 154px; gap: 10px; padding: 14px 8px; }
 		.table-list.grid-view .table-entry { display: grid; grid-template-rows: 24px minmax(0, 1fr); gap: 12px; min-width: 0; height: 100%; padding: 14px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; }
 		.table-list.grid-view .table-entry:hover { border-color: var(--vscode-focusBorder); }
-		.table-list.grid-view .entry-name { padding-right: 28px; align-items: center; font-weight: 600; }
-		.table-list.grid-view .table-delete { position: absolute; top: 10px; right: 10px; }
+		.table-list.grid-view .entry-name { padding-right: 58px; align-items: center; font-weight: 600; }
+		.table-list.grid-view .table-actions { position: absolute; top: 10px; right: 10px; }
 		.table-list.grid-view .table-icon { font-size: 22px; }
 		.grid-details { display: grid; gap: 7px 12px; }
 		.grid-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); min-width: 0; gap: 12px; }
@@ -615,6 +671,9 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.column-row { display: grid; grid-template-columns: minmax(120px, 1.4fr) minmax(110px, 1fr) minmax(74px, .7fr) auto auto auto minmax(130px, 1fr) 28px; gap: 6px; align-items: center; }
 		.column-option { display: inline-flex; align-items: center; gap: 4px; color: var(--vscode-descriptionForeground); font-size: 11px; white-space: nowrap; }
 		.default-field { display: grid; grid-template-columns: minmax(86px, .8fr) minmax(0, 1fr); gap: 4px; }
+		.sql-preview { display: grid; gap: 7px; }
+		.sql-preview[hidden] { display: none; }
+		.sql-preview pre { min-height: 180px; max-height: 420px; margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 3px; color: var(--vscode-editor-foreground); background: var(--vscode-textCodeBlock-background); font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); line-height: 1.5; user-select: text; white-space: pre-wrap; }
 		.dialog-error { min-height: 18px; margin: 0 auto 0 0; color: var(--vscode-errorForeground); font-size: 12px; }
 		.dialog-footer { justify-content: flex-end; border-top: 1px solid var(--vscode-panel-border); border-bottom: 0; }
 		.button { min-width: 72px; height: 28px; padding: 3px 12px; border: 1px solid transparent; border-radius: 2px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); cursor: pointer; }
@@ -622,7 +681,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
 		.button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
 		.button:disabled { opacity: 0.5; cursor: default; }
-		@media (max-width: 760px) { .workspace { grid-template-columns: 170px minmax(0, 1fr); } .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px 34px; } .column-header span:nth-child(3), .table-list.list-view .grid-detail:nth-child(2) { display: none; } }
+		@media (max-width: 760px) { .workspace { grid-template-columns: 170px minmax(0, 1fr); } .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px 60px; } .column-header span:nth-child(3), .table-list.list-view .grid-detail:nth-child(2) { display: none; } }
 		@media (max-width: 820px) { .column-row { grid-template-columns: minmax(120px, 1fr) minmax(100px, .8fr) 74px 28px; padding: 8px; border: 1px solid var(--vscode-panel-border); } .column-option, .default-field { grid-column: span 2; } }
 		@media (max-width: 520px) { .table-list.grid-view { grid-template-columns: minmax(0, 1fr); } }
 	</style>
@@ -666,22 +725,28 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 				<button id="closeCreateTable" class="icon-button" type="button" title="Close" aria-label="Close"><i class="codicon codicon-close"></i></button>
 			</div>
 			<div class="dialog-content">
-				<label class="form-field">
-					<span class="form-label">Table name</span>
-					<input id="tableName" class="form-input" type="text" maxlength="64" required autocomplete="off">
-				</label>
-				<div>
-					<div class="columns-header">
-						<strong>Columns</strong>
-						<button id="addColumn" class="icon-button" type="button" title="Add column" aria-label="Add column"><i class="codicon codicon-add"></i></button>
+				<div id="tableDefinitionFields">
+					<label class="form-field">
+						<span class="form-label">Table name</span>
+						<input id="tableName" class="form-input" type="text" maxlength="64" required autocomplete="off">
+					</label>
+					<div>
+						<div class="columns-header">
+							<strong>Columns</strong>
+							<button id="addColumn" class="icon-button" type="button" title="Add column" aria-label="Add column"><i class="codicon codicon-add"></i></button>
+						</div>
+						<div id="columnList" class="column-list"></div>
 					</div>
-					<div id="columnList" class="column-list"></div>
+				</div>
+				<div id="createTablePreview" class="sql-preview" hidden>
+					<span class="form-label">SQL to execute</span>
+					<pre id="createTableSql"></pre>
 				</div>
 			</div>
 			<div class="dialog-footer">
 				<p id="createTableError" class="dialog-error" role="alert"></p>
 				<button id="cancelCreateTable" class="button secondary" type="button">Cancel</button>
-				<button id="saveCreateTable" class="button" type="submit">Create</button>
+				<button id="saveCreateTable" class="button" type="submit">Review SQL</button>
 			</div>
 		</form>
 	</dialog>
@@ -703,12 +768,19 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		};
 		const state = { database: previousState.database || ${JSON.stringify(server.database)}, databases: [], tables: [], view: previousState.view === 'grid' ? 'grid' : 'list' };
 		const createTableDialog = document.getElementById('createTableDialog');
+		const createTableTitle = document.getElementById('createTableTitle');
 		const createTableForm = document.getElementById('createTableForm');
+		const tableDefinitionFields = document.getElementById('tableDefinitionFields');
 		const tableName = document.getElementById('tableName');
 		const columnList = document.getElementById('columnList');
+		const createTablePreview = document.getElementById('createTablePreview');
+		const createTableSql = document.getElementById('createTableSql');
 		const createTableError = document.getElementById('createTableError');
+		const cancelCreateTable = document.getElementById('cancelCreateTable');
 		const saveCreateTable = document.getElementById('saveCreateTable');
 		const columnTypes = ['BIGINT', 'INT', 'SMALLINT', 'TINYINT', 'DECIMAL', 'VARCHAR', 'CHAR', 'TEXT', 'LONGTEXT', 'BOOLEAN', 'DATE', 'DATETIME', 'TIMESTAMP', 'TIME', 'JSON', 'BLOB'];
+		let createTableConfirmationId;
+		let editingTable;
 
 		window.addEventListener('message', event => {
 			const message = event.data;
@@ -717,8 +789,11 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			if (message.type === 'tables') { state.database = message.database; state.tables = message.tables; render(); }
 			if (message.type === 'connectionError') showStatus(message.message, true);
 			if (message.type === 'tablesError') showStatus(message.message, true);
-			if (message.type === 'tableCreated') createTableDialog.close();
+			if (message.type === 'tableStatementExecuted') createTableDialog.close();
 			if (message.type === 'tableCreateError') { createTableError.textContent = message.message; saveCreateTable.disabled = false; }
+			if (message.type === 'tableStatementPreview') showCreateTablePreview(message.confirmationId, message.sql);
+			if (message.type === 'tableDefinition') openEditTableDialog(message.table, message.definition);
+			if (message.type === 'tableDefinitionError') { createTableError.textContent = message.message; cancelCreateTable.disabled = false; }
 		});
 		elements.refresh.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
 		elements.createDatabase.addEventListener('click', () => vscode.postMessage({ type: 'createDatabase' }));
@@ -728,12 +803,19 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		elements.listView.addEventListener('click', () => setView('list'));
 		elements.gridView.addEventListener('click', () => setView('grid'));
 		document.getElementById('closeCreateTable').addEventListener('click', () => createTableDialog.close());
-		document.getElementById('cancelCreateTable').addEventListener('click', () => createTableDialog.close());
+		cancelCreateTable.addEventListener('click', () => createTableConfirmationId ? showCreateTableFields() : createTableDialog.close());
 		document.getElementById('addColumn').addEventListener('click', () => columnList.append(createColumnRow()));
 		createTableForm.addEventListener('submit', event => {
 			event.preventDefault();
+			createTableError.textContent = '';
+			saveCreateTable.disabled = true;
+			if (createTableConfirmationId) {
+				vscode.postMessage({ type: 'confirmTableStatement', confirmationId: createTableConfirmationId });
+				return;
+			}
 			const columns = [...columnList.querySelectorAll('.column-row')].map(row => ({
 				name: row.querySelector('.column-name').value,
+				originalName: row.dataset.originalName || undefined,
 				type: row.querySelector('.column-type').value,
 				length: row.querySelector('.column-length').value,
 				nullable: row.querySelector('.column-nullable').checked,
@@ -742,15 +824,20 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 				defaultKind: row.querySelector('.column-default-kind').value,
 				defaultValue: row.querySelector('.column-default-value').value
 			}));
-			createTableError.textContent = '';
-			saveCreateTable.disabled = true;
-			vscode.postMessage({ type: 'createTable', database: state.database, definition: { name: tableName.value, columns } });
+			vscode.postMessage({
+				type: editingTable ? 'previewAlterTable' : 'previewCreateTable',
+				database: state.database,
+				table: editingTable,
+				definition: { name: tableName.value, columns }
+			});
 		});
 
 		function openCreateTableDialog() {
+			editingTable = undefined;
+			createTableTitle.textContent = 'Create table';
 			tableName.value = '';
 			createTableError.textContent = '';
-			saveCreateTable.disabled = false;
+			showCreateTableFields();
 			columnList.replaceChildren(
 				createColumnRow({ name: 'id', type: 'BIGINT', primaryKey: true, autoIncrement: true }),
 				createColumnRow({ name: 'name', type: 'VARCHAR', length: '255' })
@@ -759,9 +846,53 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			tableName.focus();
 		}
 
+		function requestEditTable(table) {
+			editingTable = table;
+			createTableConfirmationId = undefined;
+			createTableTitle.textContent = 'Edit ' + table;
+			createTableError.textContent = 'Loading table definition...';
+			tableDefinitionFields.hidden = true;
+			createTablePreview.hidden = true;
+			cancelCreateTable.textContent = 'Cancel';
+			cancelCreateTable.disabled = false;
+			saveCreateTable.disabled = true;
+			createTableDialog.showModal();
+			vscode.postMessage({ type: 'loadTableDefinition', database: state.database, table });
+		}
+
+		function openEditTableDialog(table, definition) {
+			if (editingTable !== table) return;
+			createTableError.textContent = '';
+			tableName.value = definition.name;
+			columnList.replaceChildren(...definition.columns.map(column => createColumnRow(column)));
+			showCreateTableFields();
+			tableName.focus();
+		}
+
+		function showCreateTablePreview(confirmationId, sql) {
+			createTableConfirmationId = confirmationId;
+			createTableSql.textContent = sql;
+			tableDefinitionFields.hidden = true;
+			createTablePreview.hidden = false;
+			cancelCreateTable.textContent = 'Back';
+			saveCreateTable.textContent = editingTable ? 'Confirm changes' : 'Confirm create';
+			saveCreateTable.disabled = false;
+		}
+
+		function showCreateTableFields() {
+			createTableConfirmationId = undefined;
+			createTableSql.textContent = '';
+			tableDefinitionFields.hidden = false;
+			createTablePreview.hidden = true;
+			cancelCreateTable.textContent = 'Cancel';
+			saveCreateTable.textContent = 'Review SQL';
+			saveCreateTable.disabled = false;
+		}
+
 		function createColumnRow(initial = {}) {
 			const row = document.createElement('div');
 			row.className = 'column-row';
+			row.dataset.originalName = initial.originalName || '';
 			const name = document.createElement('input');
 			name.className = 'form-input column-name';
 			name.type = 'text';
@@ -782,7 +913,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			length.className = 'form-input column-length';
 			length.type = 'text';
 			length.placeholder = 'Length';
-			length.pattern = '\\d+(,\\d+)?';
+			length.pattern = '[0-9]+(,[0-9]+)?';
 			length.value = initial.length || '';
 			const nullable = createCheckbox('Nullable', 'column-nullable', initial.nullable);
 			const primary = createCheckbox('Primary', 'column-primary', initial.primaryKey);
@@ -816,10 +947,12 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 				option.textContent = label;
 				defaultKind.append(option);
 			}
+			defaultKind.value = initial.defaultKind || 'none';
 			const defaultValue = document.createElement('input');
 			defaultValue.className = 'form-input column-default-value';
 			defaultValue.type = 'text';
 			defaultValue.placeholder = 'Default value';
+			defaultValue.value = initial.defaultValue || '';
 			const updateDefaultValue = () => defaultValue.disabled = defaultKind.value !== 'value';
 			defaultKind.addEventListener('change', updateDefaultValue);
 			updateDefaultValue();
@@ -946,8 +1079,21 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			const detailContainer = document.createElement('div');
 			detailContainer.className = 'grid-details';
 			detailContainer.append(...details);
+			const actions = document.createElement('div');
+			actions.className = 'table-actions';
+			const editButton = document.createElement('button');
+			editButton.className = 'icon-button';
+			editButton.type = 'button';
+			editButton.title = 'Edit ' + table.name;
+			editButton.setAttribute('aria-label', editButton.title);
+			editButton.innerHTML = '<i class="codicon codicon-edit"></i>';
+			editButton.addEventListener('click', event => {
+				event.stopPropagation();
+				requestEditTable(table.name);
+			});
+			editButton.addEventListener('dblclick', event => event.stopPropagation());
 			const deleteButton = document.createElement('button');
-			deleteButton.className = 'icon-button table-delete';
+			deleteButton.className = 'icon-button';
 			deleteButton.type = 'button';
 			deleteButton.title = 'Delete ' + table.name;
 			deleteButton.setAttribute('aria-label', deleteButton.title);
@@ -957,7 +1103,8 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 				vscode.postMessage({ type: 'deleteTable', database: state.database, table: table.name });
 			});
 			deleteButton.addEventListener('dblclick', event => event.stopPropagation());
-			item.append(name, detailContainer, deleteButton);
+			actions.append(editButton, deleteButton);
+			item.append(name, detailContainer, actions);
 			item.addEventListener('click', () => {
 				elements.tableList.querySelectorAll('.table-entry.selected').forEach(element => element.classList.remove('selected'));
 				item.classList.add('selected');
@@ -1428,6 +1575,7 @@ function errorMessage(error: unknown): string {
 
 interface MysqlCreateTableColumn {
 	name: string;
+	originalName?: string;
 	type: string;
 	length: string;
 	nullable: boolean;
@@ -1450,19 +1598,25 @@ const integerColumnTypes = new Set(['BIGINT', 'INT', 'SMALLINT', 'TINYINT']);
 const lengthColumnTypes = new Set(['DECIMAL', 'VARCHAR', 'CHAR']);
 const currentTimestampColumnTypes = new Set(['DATETIME', 'TIMESTAMP']);
 
-function parseCreateTableDefinition(value: unknown, existingTables: Set<string>): MysqlCreateTableDefinition {
+function parseCreateTableDefinition(
+	value: unknown,
+	existingTables: Set<string>,
+	originalTableName?: string,
+	originalColumnNames = new Set<string>(),
+): MysqlCreateTableDefinition {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) {
 		throw new Error('Invalid table definition.');
 	}
 	const definition = value as Record<string, unknown>;
 	const name = parseMysqlIdentifier(definition.name, 'Table name');
-	if (existingTables.has(name)) {
+	if (existingTables.has(name) && name !== originalTableName) {
 		throw new Error(`A table named “${name}” already exists.`);
 	}
 	if (!Array.isArray(definition.columns) || definition.columns.length === 0) {
 		throw new Error('Add at least one column.');
 	}
 	const columnNames = new Set<string>();
+	const mappedOriginalColumnNames = new Set<string>();
 	let autoIncrementColumns = 0;
 	const columns = definition.columns.map((value, index) => {
 		if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -1470,6 +1624,17 @@ function parseCreateTableDefinition(value: unknown, existingTables: Set<string>)
 		}
 		const input = value as Record<string, unknown>;
 		const columnName = parseMysqlIdentifier(input.name, `Column ${index + 1} name`);
+		const submittedOriginalName = typeof input.originalName === 'string' ? input.originalName : undefined;
+		if (submittedOriginalName && !originalColumnNames.has(submittedOriginalName)) {
+			throw new Error(`Column “${submittedOriginalName}” has changed or no longer exists. Reload the table definition.`);
+		}
+		const originalName = submittedOriginalName;
+		if (originalName && mappedOriginalColumnNames.has(originalName)) {
+			throw new Error(`Original column “${originalName}” is mapped more than once.`);
+		}
+		if (originalName) {
+			mappedOriginalColumnNames.add(originalName);
+		}
 		if (columnNames.has(columnName)) {
 			throw new Error(`Column name “${columnName}” is duplicated.`);
 		}
@@ -1507,6 +1672,7 @@ function parseCreateTableDefinition(value: unknown, existingTables: Set<string>)
 		}
 		return {
 			name: columnName,
+			originalName,
 			type,
 			length,
 			nullable,
@@ -1532,4 +1698,142 @@ function parseMysqlIdentifier(value: unknown, label: string): string {
 
 function escapeMysqlIdentifier(identifier: string): string {
 	return `\`${identifier.replaceAll('`', '``')}\``;
+}
+
+async function readTableDefinition(
+	connection: Connection,
+	database: string,
+	table: string,
+): Promise<MysqlCreateTableDefinition> {
+	const [rows] = await connection.query<RowDataPacket[]>(
+		`SELECT COLUMN_NAME AS name, DATA_TYPE AS dataType, IS_NULLABLE AS isNullable,
+			COLUMN_KEY AS columnKey, COLUMN_DEFAULT AS columnDefault, EXTRA AS extra,
+			CHARACTER_MAXIMUM_LENGTH AS characterLength, NUMERIC_PRECISION AS numericPrecision,
+			NUMERIC_SCALE AS numericScale
+		FROM information_schema.COLUMNS
+		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+		ORDER BY ORDINAL_POSITION`,
+		[database, table],
+	);
+	if (rows.length === 0) {
+		throw new Error(`Table “${table}” no longer exists.`);
+	}
+	const columns = rows.map(row => {
+		const type = String(row.dataType).toUpperCase();
+		if (!createTableColumnTypes.has(type)) {
+			throw new Error(`Column “${String(row.name)}” uses unsupported type ${type}.`);
+		}
+		let length = '';
+		if ((type === 'VARCHAR' || type === 'CHAR') && row.characterLength !== null) {
+			length = String(row.characterLength);
+		} else if (type === 'DECIMAL' && row.numericPrecision !== null) {
+			length = `${String(row.numericPrecision)},${String(row.numericScale ?? 0)}`;
+		}
+		const defaultValue = row.columnDefault === null ? '' : String(row.columnDefault);
+		const nullable = row.isNullable === 'YES';
+		const defaultKind: MysqlCreateTableColumn['defaultKind'] = row.columnDefault === null
+			? nullable ? 'null' : 'none'
+			: currentTimestampColumnTypes.has(type) && /^current_timestamp(?:\(\d+\))?$/i.test(defaultValue)
+				? 'currentTimestamp'
+				: 'value';
+		return {
+			name: String(row.name),
+			originalName: String(row.name),
+			type,
+			length,
+			nullable,
+			primaryKey: row.columnKey === 'PRI',
+			autoIncrement: String(row.extra ?? '').toLowerCase().includes('auto_increment'),
+			defaultKind,
+			defaultValue: defaultKind === 'value' ? defaultValue : '',
+		};
+	});
+	return { name: table, columns };
+}
+
+function buildColumnDefinition(column: MysqlCreateTableColumn, escapeValue: (value: string) => string): string {
+	const length = column.length ? `(${column.length})` : '';
+	const nullable = column.nullable && !column.primaryKey ? ' NULL' : ' NOT NULL';
+	let defaultClause = '';
+	if (column.defaultKind === 'null') {
+		defaultClause = ' DEFAULT NULL';
+	} else if (column.defaultKind === 'currentTimestamp') {
+		defaultClause = ' DEFAULT CURRENT_TIMESTAMP';
+	} else if (column.defaultKind === 'value') {
+		defaultClause = ` DEFAULT ${escapeValue(column.defaultValue)}`;
+	}
+	return `${escapeMysqlIdentifier(column.name)} ${column.type}${length}${nullable}${defaultClause}${column.autoIncrement ? ' AUTO_INCREMENT' : ''}`;
+}
+
+function buildCreateTableSql(
+	definition: MysqlCreateTableDefinition,
+	database: string,
+	escapeValue: (value: string) => string,
+): string {
+	const columnSql = definition.columns.map(column => {
+		return `  ${buildColumnDefinition(column, escapeValue)}`;
+	});
+	const primaryKeys = definition.columns.filter(column => column.primaryKey);
+	if (primaryKeys.length > 0) {
+		columnSql.push(`  PRIMARY KEY (${primaryKeys.map(column => escapeMysqlIdentifier(column.name)).join(', ')})`);
+	}
+	return `CREATE TABLE ${escapeMysqlIdentifier(database)}.${escapeMysqlIdentifier(definition.name)} (\n${columnSql.join(',\n')}\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`;
+}
+
+function buildAlterTableSql(
+	original: MysqlCreateTableDefinition,
+	definition: MysqlCreateTableDefinition,
+	database: string,
+	escapeValue: (value: string) => string,
+): string {
+	const clauses: string[] = [];
+	const originalColumns = new Map(original.columns.map(column => [column.name, column]));
+	const desiredOriginalNames = new Set(definition.columns.flatMap(column => column.originalName ? [column.originalName] : []));
+	for (const column of original.columns) {
+		if (!desiredOriginalNames.has(column.name)) {
+			clauses.push(`  DROP COLUMN ${escapeMysqlIdentifier(column.name)}`);
+		}
+	}
+	for (const column of definition.columns) {
+		if (column.originalName) {
+			const originalColumn = originalColumns.get(column.originalName);
+			if (!originalColumn || !sameColumnDefinition(originalColumn, column)) {
+				clauses.push(`  CHANGE COLUMN ${escapeMysqlIdentifier(column.originalName)} ${buildColumnDefinition(column, escapeValue)}`);
+			}
+		} else {
+			clauses.push(`  ADD COLUMN ${buildColumnDefinition(column, escapeValue)}`);
+		}
+	}
+	const originalPrimaryKeys = original.columns.filter(column => column.primaryKey).map(column => column.name);
+	const primaryKeyColumns = definition.columns.filter(column => column.primaryKey);
+	const desiredOriginalPrimaryKeys = primaryKeyColumns.map(column => column.originalName ?? column.name);
+	if (!sameStringArray(originalPrimaryKeys, desiredOriginalPrimaryKeys)) {
+		if (originalPrimaryKeys.length > 0) {
+			clauses.push('  DROP PRIMARY KEY');
+		}
+		if (primaryKeyColumns.length > 0) {
+			clauses.push(`  ADD PRIMARY KEY (${primaryKeyColumns.map(column => escapeMysqlIdentifier(column.name)).join(', ')})`);
+		}
+	}
+	if (definition.name !== original.name) {
+		clauses.push(`  RENAME TO ${escapeMysqlIdentifier(database)}.${escapeMysqlIdentifier(definition.name)}`);
+	}
+	if (clauses.length === 0) {
+		throw new Error('No table changes to apply.');
+	}
+	return `ALTER TABLE ${escapeMysqlIdentifier(database)}.${escapeMysqlIdentifier(original.name)}\n${clauses.join(',\n')};`;
+}
+
+function sameColumnDefinition(original: MysqlCreateTableColumn, column: MysqlCreateTableColumn): boolean {
+	return original.name === column.name
+		&& original.type === column.type
+		&& original.length === column.length
+		&& original.nullable === column.nullable
+		&& original.autoIncrement === column.autoIncrement
+		&& original.defaultKind === column.defaultKind
+		&& original.defaultValue === column.defaultValue;
+}
+
+function sameStringArray(left: string[], right: string[]): boolean {
+	return left.length === right.length && left.every((value, index) => value === right[index]);
 }
