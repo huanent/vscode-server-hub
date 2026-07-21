@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { configureMysqlEditor, configureMysqlTablePreview } from '../mysql/mysqlEditor';
-import { configureMysqlSqlEditor } from '../mysql/mysqlSqlEditor';
 import { MysqlServer, Server, ServerType } from '../servers/server';
 import { configureServerForm } from '../servers/serverForm';
 import { ServerStore } from '../servers/serverStore';
@@ -20,6 +19,7 @@ class ServerHubDocument implements vscode.CustomDocument {
 export function registerServerHubEditor(
 	context: vscode.ExtensionContext,
 	serverStore: ServerStore,
+	openMysqlSqlEditor: (serverId: string, database: string) => void,
 ): vscode.Disposable {
 	const provider: vscode.CustomReadonlyEditorProvider<ServerHubDocument> = {
 		openCustomDocument: uri => new ServerHubDocument(uri, parseEditorDescriptor(uri)),
@@ -55,12 +55,8 @@ export function registerServerHubEditor(
 					server,
 					password,
 					(database, table) => void openMysqlTablePreview(server, database, table),
-					database => void openMysqlSqlEditor(server, database),
+					database => openMysqlSqlEditor(server.id, database),
 				);
-				return;
-			}
-			if (descriptor.kind === 'mysqlSqlEditor' && server.type === 'mysql' && descriptor.database) {
-				configureMysqlSqlEditor(context.extensionUri, panel, server, password, descriptor.database);
 				return;
 			}
 			if (
@@ -102,10 +98,6 @@ export function openServerConnection(server: Server): Thenable<unknown> {
 
 function openMysqlTablePreview(server: MysqlServer, database: string, table: string): Thenable<unknown> {
 	return openEditor({ kind: 'mysqlTablePreview', serverId: server.id, database, table });
-}
-
-function openMysqlSqlEditor(server: MysqlServer, database: string): Thenable<unknown> {
-	return openEditor({ kind: 'mysqlSqlEditor', serverId: server.id, database });
 }
 
 function openEditor(descriptor: EditorDescriptor): Thenable<unknown> {

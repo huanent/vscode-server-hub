@@ -109,10 +109,20 @@
         "command": "server-hub.clearServerSearch",
         "title": "Clear Server Search",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "server-hub.executeMysqlSql",
+        "title": "Execute SQL",
+        "icon": "$(play)"
       }
     ],
     "menus": {
       "editor/title": [
+        {
+          "command": "server-hub.executeMysqlSql",
+          "when": "editorLangId == sql && server-hub.mysqlSqlEditorActive",
+          "group": "navigation@1"
+        },
         {
           "command": "server-hub.openSftp",
           "when": "activeWebviewPanelId == server-hub.editor && resourceFilename == sshTerminal.server-hub",

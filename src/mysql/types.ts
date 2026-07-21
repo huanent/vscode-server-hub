@@ -4,11 +4,6 @@ export interface MysqlEditorMessage {
 	table?: unknown;
 }
 
-export interface MysqlSqlEditorMessage {
-	type: 'executeSql';
-	sql?: unknown;
-}
-
 export interface MysqlTablePreviewMessage {
 	type: 'loadPage' | 'updateRow';
 	page?: unknown;
