@@ -81,7 +81,7 @@ export function configureMysqlEditor(
 			return;
 		}
 		if (message.type === 'createTable' && typeof message.database === 'string' && message.database === currentDatabase) {
-			openSql(currentDatabase, createTableSql);
+			await createTable(message.definition);
 			return;
 		}
 		if (
@@ -242,6 +242,39 @@ export function configureMysqlEditor(
 		} catch (error) {
 			void vscode.window.showErrorMessage(`Could not delete table: ${errorMessage(error)}`);
 		}
+	}
+
+	async function createTable(definitionValue: unknown): Promise<void> {
+		if (!connection || !currentDatabase) {
+			return;
+		}
+		try {
+			const definition = parseCreateTableDefinition(definitionValue, tables);
+			const columnSql = definition.columns.map(column => {
+				const length = column.length ? `(${column.length})` : '';
+				const nullable = column.nullable && !column.primaryKey ? ' NULL' : ' NOT NULL';
+				let defaultClause = '';
+				if (column.defaultKind === 'null') {
+					defaultClause = ' DEFAULT NULL';
+				} else if (column.defaultKind === 'currentTimestamp') {
+					defaultClause = ' DEFAULT CURRENT_TIMESTAMP';
+				} else if (column.defaultKind === 'value') {
+					defaultClause = ` DEFAULT ${connection!.escape(column.defaultValue)}`;
+				}
+				return `${escapeMysqlIdentifier(column.name)} ${column.type}${length}${nullable}${defaultClause}${column.autoIncrement ? ' AUTO_INCREMENT' : ''}`;
+			});
+		const primaryKeys = definition.columns.filter(column => column.primaryKey);
+		if (primaryKeys.length > 0) {
+			columnSql.push(`PRIMARY KEY (${primaryKeys.map(column => escapeMysqlIdentifier(column.name)).join(', ')})`);
+		}
+		await connection.query(
+			`CREATE TABLE ${escapeMysqlIdentifier(currentDatabase)}.${escapeMysqlIdentifier(definition.name)} (${columnSql.join(', ')}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		);
+		await loadTables();
+		void panel.webview.postMessage({ type: 'tableCreated' });
+	} catch (error) {
+		void panel.webview.postMessage({ type: 'tableCreateError', message: errorMessage(error) });
+	}
 	}
 
 	async function loadTables(): Promise<void> {
@@ -500,7 +533,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		* { box-sizing: border-box; }
 		html, body { width: 100%; min-width: 300px; height: 100%; margin: 0; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
 		body { display: grid; grid-template-rows: 42px minmax(0, 1fr); padding: 4px; user-select: none; }
-		button { font: inherit; }
+		button, input, select { font: inherit; }
 		.toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "database primary view"; align-items: center; gap: 10px; padding: 0 8px; border-bottom: 1px solid var(--vscode-panel-border); }
 		.primary-actions, .view-actions { display: flex; align-items: center; gap: 2px; }
 		.primary-actions { grid-area: primary; }
@@ -564,7 +597,33 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.table-list.list-view .grid-detail:nth-child(1) .entry-meta, .table-list.list-view .grid-detail:nth-child(2) .entry-meta { text-align: left; }
 		.status { padding: 44px 0; color: var(--vscode-descriptionForeground); text-align: center; }
 		.error { color: var(--vscode-errorForeground); }
+		dialog { width: min(920px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 32px)); padding: 0; overflow: hidden; border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); border-radius: 6px; color: var(--vscode-foreground); background: var(--vscode-editor-background); box-shadow: 0 12px 38px rgba(0, 0, 0, 0.35); }
+		dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+		.create-table-form { display: grid; max-height: inherit; grid-template-rows: auto minmax(0, 1fr) auto; }
+		.dialog-header, .dialog-footer { display: flex; min-height: 48px; padding: 8px 14px; align-items: center; gap: 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+		.dialog-header h2 { margin: 0; font-size: 14px; font-weight: 600; }
+		.dialog-header .icon-button { margin-left: auto; }
+		.dialog-content { display: grid; gap: 14px; padding: 14px; overflow: auto; }
+		.form-field { display: grid; gap: 5px; }
+		.form-label { color: var(--vscode-descriptionForeground); font-size: 12px; }
+		.form-input, .form-select { width: 100%; min-width: 0; height: 28px; padding: 3px 7px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); }
+		.form-input:focus-visible, .form-select:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+		.columns-header { display: flex; align-items: center; }
+		.columns-header strong { font-size: 12px; }
+		.columns-header .icon-button { margin-left: auto; }
+		.column-list { display: grid; gap: 6px; }
+		.column-row { display: grid; grid-template-columns: minmax(120px, 1.4fr) minmax(110px, 1fr) minmax(74px, .7fr) auto auto auto minmax(130px, 1fr) 28px; gap: 6px; align-items: center; }
+		.column-option { display: inline-flex; align-items: center; gap: 4px; color: var(--vscode-descriptionForeground); font-size: 11px; white-space: nowrap; }
+		.default-field { display: grid; grid-template-columns: minmax(86px, .8fr) minmax(0, 1fr); gap: 4px; }
+		.dialog-error { min-height: 18px; margin: 0 auto 0 0; color: var(--vscode-errorForeground); font-size: 12px; }
+		.dialog-footer { justify-content: flex-end; border-top: 1px solid var(--vscode-panel-border); border-bottom: 0; }
+		.button { min-width: 72px; height: 28px; padding: 3px 12px; border: 1px solid transparent; border-radius: 2px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); cursor: pointer; }
+		.button:hover:not(:disabled) { background: var(--vscode-button-hoverBackground); }
+		.button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
+		.button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+		.button:disabled { opacity: 0.5; cursor: default; }
 		@media (max-width: 760px) { .workspace { grid-template-columns: 170px minmax(0, 1fr); } .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px 34px; } .column-header span:nth-child(3), .table-list.list-view .grid-detail:nth-child(2) { display: none; } }
+		@media (max-width: 820px) { .column-row { grid-template-columns: minmax(120px, 1fr) minmax(100px, .8fr) 74px 28px; padding: 8px; border: 1px solid var(--vscode-panel-border); } .column-option, .default-field { grid-column: span 2; } }
 		@media (max-width: 520px) { .table-list.grid-view { grid-template-columns: minmax(0, 1fr); } }
 	</style>
 </head>
@@ -575,7 +634,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			<button id="refreshButton" class="icon-button" type="button" title="Refresh tables" aria-label="Refresh tables"><i class="codicon codicon-refresh"></i></button>
 		</div>
 		<div class="primary-actions" role="toolbar" aria-label="Database actions">
-			<button id="createTableButton" class="icon-button" type="button" title="Create table" aria-label="Create table" disabled><i class="codicon codicon-new-file"></i></button>
+			<button id="createTableButton" class="icon-button" type="button" title="Create table" aria-label="Create table" disabled><i class="codicon codicon-add"></i></button>
 			<button id="sqlButton" class="icon-button" type="button" title="Open SQL editor" aria-label="Open SQL editor" disabled><i class="codicon codicon-edit-code"></i></button>
 		</div>
 		<div class="view-actions" role="group" aria-label="View">
@@ -600,6 +659,32 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			<div id="status" class="status" role="status" aria-live="polite">Connecting...</div>
 		</main>
 	</div>
+	<dialog id="createTableDialog" aria-labelledby="createTableTitle">
+		<form id="createTableForm" class="create-table-form">
+			<div class="dialog-header">
+				<h2 id="createTableTitle">Create table</h2>
+				<button id="closeCreateTable" class="icon-button" type="button" title="Close" aria-label="Close"><i class="codicon codicon-close"></i></button>
+			</div>
+			<div class="dialog-content">
+				<label class="form-field">
+					<span class="form-label">Table name</span>
+					<input id="tableName" class="form-input" type="text" maxlength="64" required autocomplete="off">
+				</label>
+				<div>
+					<div class="columns-header">
+						<strong>Columns</strong>
+						<button id="addColumn" class="icon-button" type="button" title="Add column" aria-label="Add column"><i class="codicon codicon-add"></i></button>
+					</div>
+					<div id="columnList" class="column-list"></div>
+				</div>
+			</div>
+			<div class="dialog-footer">
+				<p id="createTableError" class="dialog-error" role="alert"></p>
+				<button id="cancelCreateTable" class="button secondary" type="button">Cancel</button>
+				<button id="saveCreateTable" class="button" type="submit">Create</button>
+			</div>
+		</form>
+	</dialog>
 	<script nonce="${nonce}">
 		const vscode = acquireVsCodeApi();
 		const previousState = vscode.getState() || {};
@@ -617,6 +702,13 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			status: document.getElementById('status')
 		};
 		const state = { database: previousState.database || ${JSON.stringify(server.database)}, databases: [], tables: [], view: previousState.view === 'grid' ? 'grid' : 'list' };
+		const createTableDialog = document.getElementById('createTableDialog');
+		const createTableForm = document.getElementById('createTableForm');
+		const tableName = document.getElementById('tableName');
+		const columnList = document.getElementById('columnList');
+		const createTableError = document.getElementById('createTableError');
+		const saveCreateTable = document.getElementById('saveCreateTable');
+		const columnTypes = ['BIGINT', 'INT', 'SMALLINT', 'TINYINT', 'DECIMAL', 'VARCHAR', 'CHAR', 'TEXT', 'LONGTEXT', 'BOOLEAN', 'DATE', 'DATETIME', 'TIMESTAMP', 'TIME', 'JSON', 'BLOB'];
 
 		window.addEventListener('message', event => {
 			const message = event.data;
@@ -625,14 +717,134 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			if (message.type === 'tables') { state.database = message.database; state.tables = message.tables; render(); }
 			if (message.type === 'connectionError') showStatus(message.message, true);
 			if (message.type === 'tablesError') showStatus(message.message, true);
+			if (message.type === 'tableCreated') createTableDialog.close();
+			if (message.type === 'tableCreateError') { createTableError.textContent = message.message; saveCreateTable.disabled = false; }
 		});
 		elements.refresh.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
 		elements.createDatabase.addEventListener('click', () => vscode.postMessage({ type: 'createDatabase' }));
 		elements.importDatabase.addEventListener('click', () => vscode.postMessage({ type: 'importDatabase' }));
-		elements.createTable.addEventListener('click', () => vscode.postMessage({ type: 'createTable', database: state.database }));
+		elements.createTable.addEventListener('click', openCreateTableDialog);
 		elements.sql.addEventListener('click', () => vscode.postMessage({ type: 'openSql', database: state.database }));
 		elements.listView.addEventListener('click', () => setView('list'));
 		elements.gridView.addEventListener('click', () => setView('grid'));
+		document.getElementById('closeCreateTable').addEventListener('click', () => createTableDialog.close());
+		document.getElementById('cancelCreateTable').addEventListener('click', () => createTableDialog.close());
+		document.getElementById('addColumn').addEventListener('click', () => columnList.append(createColumnRow()));
+		createTableForm.addEventListener('submit', event => {
+			event.preventDefault();
+			const columns = [...columnList.querySelectorAll('.column-row')].map(row => ({
+				name: row.querySelector('.column-name').value,
+				type: row.querySelector('.column-type').value,
+				length: row.querySelector('.column-length').value,
+				nullable: row.querySelector('.column-nullable').checked,
+				primaryKey: row.querySelector('.column-primary').checked,
+				autoIncrement: row.querySelector('.column-auto-increment').checked,
+				defaultKind: row.querySelector('.column-default-kind').value,
+				defaultValue: row.querySelector('.column-default-value').value
+			}));
+			createTableError.textContent = '';
+			saveCreateTable.disabled = true;
+			vscode.postMessage({ type: 'createTable', database: state.database, definition: { name: tableName.value, columns } });
+		});
+
+		function openCreateTableDialog() {
+			tableName.value = '';
+			createTableError.textContent = '';
+			saveCreateTable.disabled = false;
+			columnList.replaceChildren(
+				createColumnRow({ name: 'id', type: 'BIGINT', primaryKey: true, autoIncrement: true }),
+				createColumnRow({ name: 'name', type: 'VARCHAR', length: '255' })
+			);
+			createTableDialog.showModal();
+			tableName.focus();
+		}
+
+		function createColumnRow(initial = {}) {
+			const row = document.createElement('div');
+			row.className = 'column-row';
+			const name = document.createElement('input');
+			name.className = 'form-input column-name';
+			name.type = 'text';
+			name.maxLength = 64;
+			name.placeholder = 'Column name';
+			name.required = true;
+			name.value = initial.name || '';
+			const type = document.createElement('select');
+			type.className = 'form-select column-type';
+			for (const value of columnTypes) {
+				const option = document.createElement('option');
+				option.value = value;
+				option.textContent = value;
+				type.append(option);
+			}
+			type.value = initial.type || 'VARCHAR';
+			const length = document.createElement('input');
+			length.className = 'form-input column-length';
+			length.type = 'text';
+			length.placeholder = 'Length';
+			length.pattern = '\\d+(,\\d+)?';
+			length.value = initial.length || '';
+			const nullable = createCheckbox('Nullable', 'column-nullable', initial.nullable);
+			const primary = createCheckbox('Primary', 'column-primary', initial.primaryKey);
+			const autoIncrement = createCheckbox('Auto increment', 'column-auto-increment', initial.autoIncrement);
+			const nullableInput = nullable.querySelector('input');
+			const primaryInput = primary.querySelector('input');
+			const autoIncrementInput = autoIncrement.querySelector('input');
+			const updateColumnState = () => {
+				const supportsLength = ['DECIMAL', 'VARCHAR', 'CHAR'].includes(type.value);
+				length.disabled = !supportsLength;
+				length.required = type.value === 'VARCHAR' || type.value === 'CHAR';
+				if (!supportsLength) length.value = '';
+				if (primaryInput.checked) nullableInput.checked = false;
+				if (autoIncrementInput.checked) {
+					if (!['BIGINT', 'INT', 'SMALLINT', 'TINYINT'].includes(type.value)) type.value = 'BIGINT';
+					primaryInput.checked = true;
+					nullableInput.checked = false;
+				}
+			};
+			type.addEventListener('change', updateColumnState);
+			primaryInput.addEventListener('change', updateColumnState);
+			autoIncrementInput.addEventListener('change', updateColumnState);
+			updateColumnState();
+			const defaultField = document.createElement('div');
+			defaultField.className = 'default-field';
+			const defaultKind = document.createElement('select');
+			defaultKind.className = 'form-select column-default-kind';
+			for (const [value, label] of [['none', 'No default'], ['null', 'NULL'], ['currentTimestamp', 'Current time'], ['value', 'Value']]) {
+				const option = document.createElement('option');
+				option.value = value;
+				option.textContent = label;
+				defaultKind.append(option);
+			}
+			const defaultValue = document.createElement('input');
+			defaultValue.className = 'form-input column-default-value';
+			defaultValue.type = 'text';
+			defaultValue.placeholder = 'Default value';
+			const updateDefaultValue = () => defaultValue.disabled = defaultKind.value !== 'value';
+			defaultKind.addEventListener('change', updateDefaultValue);
+			updateDefaultValue();
+			defaultField.append(defaultKind, defaultValue);
+			const remove = document.createElement('button');
+			remove.className = 'icon-button';
+			remove.type = 'button';
+			remove.title = 'Remove column';
+			remove.setAttribute('aria-label', remove.title);
+			remove.innerHTML = '<i class="codicon codicon-trash"></i>';
+			remove.addEventListener('click', () => row.remove());
+			row.append(name, type, length, nullable, primary, autoIncrement, defaultField, remove);
+			return row;
+		}
+
+		function createCheckbox(labelText, className, checked) {
+			const label = document.createElement('label');
+			label.className = 'column-option';
+			const input = document.createElement('input');
+			input.type = 'checkbox';
+			input.className = className;
+			input.checked = Boolean(checked);
+			label.append(input, document.createTextNode(labelText));
+			return label;
+		}
 
 		function renderDatabases(databases, selectedDatabase, forceSelection) {
 			state.databases = databases;
@@ -1214,8 +1426,110 @@ function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-const createTableSql = `CREATE TABLE \`new_table\` (
-	\`id\` BIGINT NOT NULL AUTO_INCREMENT,
-	PRIMARY KEY (\`id\`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-`;
+interface MysqlCreateTableColumn {
+	name: string;
+	type: string;
+	length: string;
+	nullable: boolean;
+	primaryKey: boolean;
+	autoIncrement: boolean;
+	defaultKind: 'none' | 'null' | 'currentTimestamp' | 'value';
+	defaultValue: string;
+}
+
+interface MysqlCreateTableDefinition {
+	name: string;
+	columns: MysqlCreateTableColumn[];
+}
+
+const createTableColumnTypes = new Set([
+	'BIGINT', 'INT', 'SMALLINT', 'TINYINT', 'DECIMAL', 'VARCHAR', 'CHAR', 'TEXT', 'LONGTEXT',
+	'BOOLEAN', 'DATE', 'DATETIME', 'TIMESTAMP', 'TIME', 'JSON', 'BLOB',
+]);
+const integerColumnTypes = new Set(['BIGINT', 'INT', 'SMALLINT', 'TINYINT']);
+const lengthColumnTypes = new Set(['DECIMAL', 'VARCHAR', 'CHAR']);
+const currentTimestampColumnTypes = new Set(['DATETIME', 'TIMESTAMP']);
+
+function parseCreateTableDefinition(value: unknown, existingTables: Set<string>): MysqlCreateTableDefinition {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) {
+		throw new Error('Invalid table definition.');
+	}
+	const definition = value as Record<string, unknown>;
+	const name = parseMysqlIdentifier(definition.name, 'Table name');
+	if (existingTables.has(name)) {
+		throw new Error(`A table named “${name}” already exists.`);
+	}
+	if (!Array.isArray(definition.columns) || definition.columns.length === 0) {
+		throw new Error('Add at least one column.');
+	}
+	const columnNames = new Set<string>();
+	let autoIncrementColumns = 0;
+	const columns = definition.columns.map((value, index) => {
+		if (!value || typeof value !== 'object' || Array.isArray(value)) {
+			throw new Error(`Column ${index + 1} is invalid.`);
+		}
+		const input = value as Record<string, unknown>;
+		const columnName = parseMysqlIdentifier(input.name, `Column ${index + 1} name`);
+		if (columnNames.has(columnName)) {
+			throw new Error(`Column name “${columnName}” is duplicated.`);
+		}
+		columnNames.add(columnName);
+		const type = typeof input.type === 'string' ? input.type.toUpperCase() : '';
+		if (!createTableColumnTypes.has(type)) {
+			throw new Error(`Column “${columnName}” has an unsupported type.`);
+		}
+		const length = typeof input.length === 'string' ? input.length.trim() : '';
+		if (length && (!lengthColumnTypes.has(type) || !/^\d+(?:,\d+)?$/.test(length))) {
+			throw new Error(`Column “${columnName}” has an invalid length.`);
+		}
+		if ((type === 'VARCHAR' || type === 'CHAR') && !length) {
+			throw new Error(`Column “${columnName}” requires a length.`);
+		}
+		const primaryKey = input.primaryKey === true;
+		const autoIncrement = input.autoIncrement === true;
+		if (autoIncrement && (!integerColumnTypes.has(type) || !primaryKey)) {
+			throw new Error(`Auto increment column “${columnName}” must be an integer primary key.`);
+		}
+		if (autoIncrement && ++autoIncrementColumns > 1) {
+			throw new Error('Only one column can use auto increment.');
+		}
+		const defaultKind = input.defaultKind;
+		if (defaultKind !== 'none' && defaultKind !== 'null' && defaultKind !== 'currentTimestamp' && defaultKind !== 'value') {
+			throw new Error(`Column “${columnName}” has an invalid default value.`);
+		}
+		const validatedDefaultKind: MysqlCreateTableColumn['defaultKind'] = defaultKind;
+		const nullable = input.nullable === true && !primaryKey;
+		if (validatedDefaultKind === 'null' && !nullable) {
+			throw new Error(`Column “${columnName}” must be nullable to default to NULL.`);
+		}
+		if (validatedDefaultKind === 'currentTimestamp' && !currentTimestampColumnTypes.has(type)) {
+			throw new Error(`Column “${columnName}” cannot default to CURRENT_TIMESTAMP.`);
+		}
+		return {
+			name: columnName,
+			type,
+			length,
+			nullable,
+			primaryKey,
+			autoIncrement,
+			defaultKind: validatedDefaultKind,
+			defaultValue: typeof input.defaultValue === 'string' ? input.defaultValue : '',
+		};
+	});
+	return { name, columns };
+}
+
+function parseMysqlIdentifier(value: unknown, label: string): string {
+	const identifier = typeof value === 'string' ? value.trim() : '';
+	if (!identifier) {
+		throw new Error(`${label} is required.`);
+	}
+	if (Buffer.byteLength(identifier, 'utf8') > 64) {
+		throw new Error(`${label} must be 64 bytes or fewer.`);
+	}
+	return identifier;
+}
+
+function escapeMysqlIdentifier(identifier: string): string {
+	return `\`${identifier.replaceAll('`', '``')}\``;
+}

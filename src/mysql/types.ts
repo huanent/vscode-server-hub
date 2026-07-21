@@ -2,6 +2,7 @@ export interface MysqlEditorMessage {
 	type: 'selectDatabase' | 'refresh' | 'openTable' | 'deleteTable' | 'openSql' | 'createTable' | 'createDatabase' | 'deleteDatabase' | 'importDatabase' | 'exportDatabase';
 	database?: unknown;
 	table?: unknown;
+	definition?: unknown;
 }
 
 export interface MysqlTablePreviewMessage {
