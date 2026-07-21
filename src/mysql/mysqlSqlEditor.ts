@@ -66,7 +66,7 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 		this.updateActiveContext();
 	}
 
-	async open(serverId: string, database: string): Promise<void> {
+	async open(serverId: string, database: string, initialSql = ''): Promise<void> {
 		const temporaryDirectory = vscode.Uri.joinPath(
 			this.context.globalStorageUri,
 			'mysql-sql',
@@ -74,7 +74,7 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 		);
 		const documentUri = vscode.Uri.joinPath(temporaryDirectory, `${safeFileName(database)}.sql`);
 		await vscode.workspace.fs.createDirectory(temporaryDirectory);
-		await vscode.workspace.fs.writeFile(documentUri, new Uint8Array());
+		await vscode.workspace.fs.writeFile(documentUri, Buffer.from(initialSql));
 		const document = await vscode.workspace.openTextDocument(documentUri);
 		const documentContext = { serverId, database, temporaryDirectory };
 		this.documentContexts.set(document.uri.toString(), documentContext);

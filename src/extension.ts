@@ -16,7 +16,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 		serverStore,
 		treeDataProvider,
 		mysqlSqlEditor,
-		registerServerHubEditor(context, serverStore, (serverId, database) => void mysqlSqlEditor.open(serverId, database)),
+		registerServerHubEditor(context, serverStore, (serverId, database, initialSql) => void mysqlSqlEditor.open(serverId, database, initialSql)),
 		registerServerCommands(serverStore, treeDataProvider),
 		vscode.window.createTreeView('server-hub.servers', {
 			treeDataProvider,

@@ -19,7 +19,7 @@ class ServerHubDocument implements vscode.CustomDocument {
 export function registerServerHubEditor(
 	context: vscode.ExtensionContext,
 	serverStore: ServerStore,
-	openMysqlSqlEditor: (serverId: string, database: string) => void,
+	openMysqlSqlEditor: (serverId: string, database: string, initialSql?: string) => void,
 ): vscode.Disposable {
 	const provider: vscode.CustomReadonlyEditorProvider<ServerHubDocument> = {
 		openCustomDocument: uri => new ServerHubDocument(uri, parseEditorDescriptor(uri)),
@@ -55,7 +55,7 @@ export function registerServerHubEditor(
 					server,
 					password,
 					(database, table) => void openMysqlTablePreview(server, database, table),
-					database => openMysqlSqlEditor(server.id, database),
+					(database, initialSql) => openMysqlSqlEditor(server.id, database, initialSql),
 				);
 				return;
 			}

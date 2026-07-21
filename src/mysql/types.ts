@@ -1,11 +1,11 @@
 export interface MysqlEditorMessage {
-	type: 'selectDatabase' | 'refresh' | 'openTable' | 'openSql' | 'createDatabase' | 'deleteDatabase' | 'importDatabase' | 'exportDatabase';
+	type: 'selectDatabase' | 'refresh' | 'openTable' | 'deleteTable' | 'openSql' | 'createTable' | 'createDatabase' | 'deleteDatabase' | 'importDatabase' | 'exportDatabase';
 	database?: unknown;
 	table?: unknown;
 }
 
 export interface MysqlTablePreviewMessage {
-	type: 'loadPage' | 'updateRow';
+	type: 'loadPage' | 'updateRow' | 'insertRow';
 	page?: unknown;
 	pageSize?: unknown;
 	sort?: unknown;
@@ -30,6 +30,8 @@ export interface MysqlColumnInfo {
 	boolean: boolean;
 	nullable: boolean;
 	primaryKey: boolean;
+	autoIncrement: boolean;
+	hasDefault: boolean;
 	editable: boolean;
 }
 

@@ -27,7 +27,7 @@ export function configureMysqlEditor(
 	server: MysqlServer,
 	password: string,
 	openTable: (database: string, table: string) => void,
-	openSql: (database: string) => void,
+	openSql: (database: string, initialSql?: string) => void,
 ): void {
 	panel.title = server.name;
 	panel.webview.options = {
@@ -78,6 +78,20 @@ export function configureMysqlEditor(
 		}
 		if (message.type === 'openSql' && typeof message.database === 'string' && message.database === currentDatabase) {
 			openSql(currentDatabase);
+			return;
+		}
+		if (message.type === 'createTable' && typeof message.database === 'string' && message.database === currentDatabase) {
+			openSql(currentDatabase, createTableSql);
+			return;
+		}
+		if (
+			message.type === 'deleteTable'
+			&& typeof message.database === 'string'
+			&& typeof message.table === 'string'
+			&& message.database === currentDatabase
+			&& tables.has(message.table)
+		) {
+			await deleteTable(message.table);
 			return;
 		}
 		if (
@@ -208,6 +222,28 @@ export function configureMysqlEditor(
 		}
 	}
 
+	async function deleteTable(table: string): Promise<void> {
+		if (!connection || !currentDatabase) {
+			return;
+		}
+		const database = currentDatabase;
+		const confirmation = await vscode.window.showWarningMessage(
+			`Delete table “${database}.${table}” and all of its data?`,
+			{ modal: true },
+			'Delete',
+		);
+		if (confirmation !== 'Delete') {
+			return;
+		}
+		try {
+			await connection.query('DROP TABLE ??.??', [database, table]);
+			await loadTables();
+			void vscode.window.showInformationMessage(`Deleted table “${database}.${table}”.`);
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not delete table: ${errorMessage(error)}`);
+		}
+	}
+
 	async function loadTables(): Promise<void> {
 		if (!connection || !currentDatabase) {
 			tables.clear();
@@ -277,6 +313,10 @@ export function configureMysqlTablePreview(
 			await updateRow(message.rowId, message.values);
 			return;
 		}
+		if (message.type === 'insertRow') {
+			await insertRow(message.values);
+			return;
+		}
 		if (
 			message.type !== 'loadPage'
 			|| typeof message.page !== 'number'
@@ -305,20 +345,27 @@ export function configureMysqlTablePreview(
 			columnNames = new Set(columns);
 			const [metadataRows] = await connection.query<RowDataPacket[]>(
 				`SELECT COLUMN_NAME AS name, DATA_TYPE AS dataType, COLUMN_TYPE AS columnType, IS_NULLABLE AS isNullable,
-					COLUMN_KEY AS columnKey, EXTRA AS extra, GENERATION_EXPRESSION AS generationExpression
+					COLUMN_KEY AS columnKey, COLUMN_DEFAULT AS columnDefault, EXTRA AS extra,
+					GENERATION_EXPRESSION AS generationExpression
 				FROM information_schema.COLUMNS
 				WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
 				ORDER BY ORDINAL_POSITION`,
 				[database, table],
 			);
-			columnInfo = metadataRows.map(row => ({
-				name: String(row.name),
-				dataType: String(row.dataType),
-				boolean: String(row.dataType).toLowerCase() === 'bit' && String(row.columnType).toLowerCase() === 'bit(1)',
-				nullable: row.isNullable === 'YES',
-				primaryKey: row.columnKey === 'PRI',
-				editable: !String(row.extra ?? '').includes('GENERATED') && !String(row.generationExpression ?? ''),
-			}));
+			columnInfo = metadataRows.map(row => {
+				const extra = String(row.extra ?? '').toLowerCase();
+				const generationExpression = String(row.generationExpression ?? '');
+				return {
+					name: String(row.name),
+					dataType: String(row.dataType),
+					boolean: String(row.dataType).toLowerCase() === 'bit' && String(row.columnType).toLowerCase() === 'bit(1)',
+					nullable: row.isNullable === 'YES',
+					primaryKey: row.columnKey === 'PRI',
+					autoIncrement: extra.includes('auto_increment'),
+					hasDefault: row.columnDefault !== null || extra.includes('default_generated'),
+					editable: !generationExpression,
+				};
+			});
 			editableColumnNames = new Set(columnInfo.filter(column => column.editable).map(column => column.name));
 			primaryKeyColumns = columnInfo.filter(column => column.primaryKey).map(column => column.name);
 			await loadPage(1, 100, undefined, []);
@@ -409,6 +456,32 @@ export function configureMysqlTablePreview(
 			void panel.webview.postMessage({ type: 'rowUpdateError', message: errorMessage(error) });
 		}
 	}
+
+	async function insertRow(valuesValue: unknown): Promise<void> {
+		if (!connection || !valuesValue || typeof valuesValue !== 'object' || Array.isArray(valuesValue)) {
+			return;
+		}
+		const insertableColumnNames = new Set(columnInfo
+			.filter(column => column.editable && !column.autoIncrement)
+			.map(column => column.name));
+		const values = parseRowChanges(valuesValue, insertableColumnNames, columnInfo);
+		try {
+			if (values.length === 0) {
+				await connection.query('INSERT INTO ??.?? () VALUES ()', [database, table]);
+			} else {
+				const columnsClause = values.map(() => '??').join(', ');
+				const valuesClause = values.map(() => '?').join(', ');
+				await connection.query(
+					`INSERT INTO ??.?? (${columnsClause}) VALUES (${valuesClause})`,
+					[database, table, ...values.map(value => value.column), ...values.map(value => value.value)],
+				);
+			}
+			void panel.webview.postMessage({ type: 'rowInserted' });
+			await loadPage(currentRequest.page, currentRequest.pageSize, currentRequest.sort, currentRequest.filters);
+		} catch (error) {
+			void panel.webview.postMessage({ type: 'rowInsertError', message: errorMessage(error) });
+		}
+	}
 }
 
 function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, server: MysqlServer): string {
@@ -457,14 +530,14 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.database-entry:hover .database-item-action, .database-entry:focus-within .database-item-action { visibility: visible; }
 		.database-entry.selected .database-item-action:hover { background: rgba(255, 255, 255, 0.16); }
 		main { min-width: 0; min-height: 0; overflow: auto; }
-		.column-header, .table-list.list-view .table-entry { display: grid; grid-template-columns: minmax(190px, 1fr) 110px minmax(160px, 210px) 130px; align-items: center; }
+		.column-header, .table-list.list-view .table-entry { display: grid; grid-template-columns: minmax(190px, 1fr) 110px minmax(160px, 210px) 130px 34px; align-items: center; }
 		.column-header { position: sticky; top: 0; z-index: 2; height: 30px; padding: 0 14px 0 18px; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); background: var(--vscode-editor-background); font-size: 12px; }
 		.column-header[hidden] { display: none; }
 		.column-header span:not(:first-child) { text-align: right; }
 		.column-header span:nth-child(2), .column-header span:nth-child(3) { padding-left: 12px; text-align: left; }
 		.table-list.list-view { padding: 4px 8px 12px; }
 		.table-list.list-view .table-entry { min-height: 32px; padding: 0 6px 0 10px; border-radius: 3px; }
-		.table-entry { color: var(--vscode-foreground); cursor: default; }
+		.table-entry { position: relative; color: var(--vscode-foreground); cursor: default; }
 		.table-entry:hover { color: var(--vscode-list-hoverForeground); background: var(--vscode-list-hoverBackground); }
 		.table-entry.selected { color: var(--vscode-list-inactiveSelectionForeground, var(--vscode-foreground)); background: var(--vscode-list-inactiveSelectionBackground); }
 		.entry-name { display: flex; min-width: 0; align-items: center; gap: 8px; }
@@ -472,10 +545,12 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.entry-name span:last-child, .entry-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 		.entry-meta { padding-left: 12px; color: var(--vscode-descriptionForeground); font-size: 12px; text-align: right; }
 		.selected .entry-meta { color: inherit; }
+		.table-delete { width: 26px; height: 26px; justify-self: end; color: inherit; }
 		.table-list.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); grid-auto-rows: 154px; gap: 10px; padding: 14px 8px; }
 		.table-list.grid-view .table-entry { display: grid; grid-template-rows: 24px minmax(0, 1fr); gap: 12px; min-width: 0; height: 100%; padding: 14px; border: 1px solid var(--vscode-panel-border); border-radius: 6px; }
 		.table-list.grid-view .table-entry:hover { border-color: var(--vscode-focusBorder); }
-		.table-list.grid-view .entry-name { align-items: center; font-weight: 600; }
+		.table-list.grid-view .entry-name { padding-right: 28px; align-items: center; font-weight: 600; }
+		.table-list.grid-view .table-delete { position: absolute; top: 10px; right: 10px; }
 		.table-list.grid-view .table-icon { font-size: 22px; }
 		.grid-details { display: grid; gap: 7px 12px; }
 		.grid-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); min-width: 0; gap: 12px; }
@@ -489,7 +564,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		.table-list.list-view .grid-detail:nth-child(1) .entry-meta, .table-list.list-view .grid-detail:nth-child(2) .entry-meta { text-align: left; }
 		.status { padding: 44px 0; color: var(--vscode-descriptionForeground); text-align: center; }
 		.error { color: var(--vscode-errorForeground); }
-		@media (max-width: 760px) { .workspace { grid-template-columns: 170px minmax(0, 1fr); } .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px; } .column-header span:nth-child(3), .table-list.list-view .grid-detail:nth-child(2) { display: none; } }
+		@media (max-width: 760px) { .workspace { grid-template-columns: 170px minmax(0, 1fr); } .column-header, .table-list.list-view .table-entry { grid-template-columns: minmax(180px, 1fr) 90px 110px 34px; } .column-header span:nth-child(3), .table-list.list-view .grid-detail:nth-child(2) { display: none; } }
 		@media (max-width: 520px) { .table-list.grid-view { grid-template-columns: minmax(0, 1fr); } }
 	</style>
 </head>
@@ -500,6 +575,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			<button id="refreshButton" class="icon-button" type="button" title="Refresh tables" aria-label="Refresh tables"><i class="codicon codicon-refresh"></i></button>
 		</div>
 		<div class="primary-actions" role="toolbar" aria-label="Database actions">
+			<button id="createTableButton" class="icon-button" type="button" title="Create table" aria-label="Create table" disabled><i class="codicon codicon-new-file"></i></button>
 			<button id="sqlButton" class="icon-button" type="button" title="Open SQL editor" aria-label="Open SQL editor" disabled><i class="codicon codicon-edit-code"></i></button>
 		</div>
 		<div class="view-actions" role="group" aria-label="View">
@@ -519,7 +595,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			<div id="databaseList" class="database-list" role="listbox" aria-label="Databases"></div>
 		</aside>
 		<main>
-			<div id="columnHeader" class="column-header"><span>Name</span><span>Rows</span><span>Updated</span><span>Data size</span></div>
+			<div id="columnHeader" class="column-header"><span>Name</span><span>Rows</span><span>Updated</span><span>Data size</span><span></span></div>
 			<div id="tableList" class="table-list list-view" role="listbox" aria-label="Tables"></div>
 			<div id="status" class="status" role="status" aria-live="polite">Connecting...</div>
 		</main>
@@ -531,6 +607,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			refresh: document.getElementById('refreshButton'),
 			createDatabase: document.getElementById('createDatabaseButton'),
 			importDatabase: document.getElementById('importDatabaseButton'),
+			createTable: document.getElementById('createTableButton'),
 			sql: document.getElementById('sqlButton'),
 			databaseList: document.getElementById('databaseList'),
 			listView: document.getElementById('listViewButton'),
@@ -552,6 +629,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		elements.refresh.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
 		elements.createDatabase.addEventListener('click', () => vscode.postMessage({ type: 'createDatabase' }));
 		elements.importDatabase.addEventListener('click', () => vscode.postMessage({ type: 'importDatabase' }));
+		elements.createTable.addEventListener('click', () => vscode.postMessage({ type: 'createTable', database: state.database }));
 		elements.sql.addEventListener('click', () => vscode.postMessage({ type: 'openSql', database: state.database }));
 		elements.listView.addEventListener('click', () => setView('list'));
 		elements.gridView.addEventListener('click', () => setView('grid'));
@@ -608,6 +686,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 
 		function setDatabaseActionsDisabled(disabled) {
 			elements.importDatabase.disabled = disabled;
+			elements.createTable.disabled = disabled;
 			elements.sql.disabled = disabled;
 		}
 
@@ -655,7 +734,18 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			const detailContainer = document.createElement('div');
 			detailContainer.className = 'grid-details';
 			detailContainer.append(...details);
-			item.append(name, detailContainer);
+			const deleteButton = document.createElement('button');
+			deleteButton.className = 'icon-button table-delete';
+			deleteButton.type = 'button';
+			deleteButton.title = 'Delete ' + table.name;
+			deleteButton.setAttribute('aria-label', deleteButton.title);
+			deleteButton.innerHTML = '<i class="codicon codicon-trash"></i>';
+			deleteButton.addEventListener('click', event => {
+				event.stopPropagation();
+				vscode.postMessage({ type: 'deleteTable', database: state.database, table: table.name });
+			});
+			deleteButton.addEventListener('dblclick', event => event.stopPropagation());
+			item.append(name, detailContainer, deleteButton);
 			item.addEventListener('click', () => {
 				elements.tableList.querySelectorAll('.table-entry.selected').forEach(element => element.classList.remove('selected'));
 				item.classList.add('selected');
@@ -720,7 +810,8 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		button, select, input, textarea { font: inherit; }
 		header { position: relative; z-index: 2; display: flex; align-items: center; gap: 12px; padding: 0 10px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
 		.path { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-		.pagination { display: flex; margin-left: auto; align-items: center; gap: 6px; }
+		#createRow { margin-left: auto; }
+		.pagination { display: flex; align-items: center; gap: 6px; }
 		.count, .page-status { color: var(--vscode-descriptionForeground); font-size: 12px; white-space: nowrap; }
 		.page-size { height: 26px; padding: 2px 22px 2px 7px; border: 1px solid var(--vscode-dropdown-border, transparent); border-radius: 4px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); }
 		.icon-button { display: inline-grid; width: 26px; height: 26px; padding: 0; place-items: center; border: 0; border-radius: 4px; color: var(--vscode-icon-foreground); background: transparent; cursor: pointer; }
@@ -767,6 +858,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		.field-input { width: 100%; min-height: 28px; padding: 4px 7px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 2px; color: var(--vscode-input-foreground); background: var(--vscode-input-background); resize: vertical; }
 		.field-input:disabled { opacity: 0.55; }
 		.null-toggle { display: inline-flex; align-items: center; gap: 4px; }
+		.field-toggles { display: inline-flex; align-items: center; gap: 8px; }
 		.dialog-error { min-height: 18px; margin: 0; color: var(--vscode-errorForeground); font-size: 12px; }
 		.dialog-footer { justify-content: flex-end; border-top: 1px solid var(--vscode-panel-border); border-bottom: 0; }
 		.button { min-width: 72px; height: 28px; padding: 3px 12px; border: 1px solid transparent; border-radius: 2px; color: var(--vscode-button-foreground); background: var(--vscode-button-background); cursor: pointer; }
@@ -780,6 +872,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 <body>
 	<header>
 		<span class="path">${escapeHtml(database)} › ${escapeHtml(table)}</span>
+		<button id="createRow" class="icon-button" type="button" title="Create row" aria-label="Create row" disabled><i class="codicon codicon-add"></i></button>
 		<nav class="pagination" aria-label="Table pagination">
 			<span id="count" class="count">Loading...</span>
 			<select id="pageSize" class="page-size" aria-label="Rows per page">
@@ -812,6 +905,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		const pageSize = document.getElementById('pageSize');
 		const previousPage = document.getElementById('previousPage');
 		const nextPage = document.getElementById('nextPage');
+		const createRow = document.getElementById('createRow');
 		const pageStatus = document.getElementById('pageStatus');
 		const editDialog = document.getElementById('editDialog');
 		const editDialogTitle = document.getElementById('editDialogTitle');
@@ -824,6 +918,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		let totalPages = 1;
 		let sort;
 		let editingRow;
+		let dialogMode = 'view';
 		let tableMessage;
 		let tableBody;
 		let columnHeaders = [];
@@ -836,7 +931,10 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			if (message.type === 'tableError') renderError(message.message);
 			if (message.type === 'rowUpdated') editDialog.close();
 			if (message.type === 'rowUpdateError') { dialogError.textContent = message.message; saveEdit.disabled = false; }
+			if (message.type === 'rowInserted') editDialog.close();
+			if (message.type === 'rowInsertError') { dialogError.textContent = message.message; saveEdit.disabled = false; }
 		});
+		createRow.addEventListener('click', openCreateDialog);
 		pageSize.addEventListener('change', () => loadPage(1));
 		previousPage.addEventListener('click', () => loadPage(currentPage - 1));
 		nextPage.addEventListener('click', () => loadPage(currentPage + 1));
@@ -844,20 +942,26 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		cancelEdit.addEventListener('click', () => editDialog.close());
 		editForm.addEventListener('submit', event => {
 			event.preventDefault();
-			if (!editingRow || !tableMessage) return;
+			if (!tableMessage || (dialogMode === 'edit' && !editingRow)) return;
 			const values = {};
 			for (const field of dialogFields.querySelectorAll('.edit-field')) {
 				const column = field.dataset.column;
 				const input = field.querySelector('.field-input');
 				const nullToggle = field.querySelector('.null-checkbox');
-				const originalValue = editingRow.editValues[tableMessage.columns.indexOf(column)];
+				const defaultToggle = field.querySelector('.default-checkbox');
+				if (defaultToggle?.checked) continue;
 				const value = nullToggle?.checked ? null : input.value;
-				if (value !== originalValue) values[column] = value;
+				if (dialogMode === 'create') values[column] = value;
+				else {
+					const originalValue = editingRow.editValues[tableMessage.columns.indexOf(column)];
+					if (value !== originalValue) values[column] = value;
+				}
 			}
-			if (Object.keys(values).length === 0) { editDialog.close(); return; }
+			if (dialogMode === 'edit' && Object.keys(values).length === 0) { editDialog.close(); return; }
 			dialogError.textContent = '';
 			saveEdit.disabled = true;
-			vscode.postMessage({ type: 'updateRow', rowId: editingRow.rowId, values });
+			if (dialogMode === 'create') vscode.postMessage({ type: 'insertRow', values });
+			else vscode.postMessage({ type: 'updateRow', rowId: editingRow.rowId, values });
 		});
 		function renderTable(message) {
 			tableMessage = message;
@@ -868,6 +972,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			for (const filter of message.filters) filters.set(filter.column, filter.value);
 			pageSize.value = String(message.pageSize);
 			pageSize.disabled = false;
+			createRow.disabled = false;
 			count.textContent = message.totalRows.toLocaleString() + (message.totalRows === 1 ? ' row' : ' rows');
 			pageStatus.textContent = currentPage.toLocaleString() + ' / ' + totalPages.toLocaleString();
 			previousPage.disabled = currentPage <= 1;
@@ -980,16 +1085,20 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 				}
 			}
 		}
-		function openRowDialog(row, readOnly) {
-			editingRow = readOnly ? undefined : row;
-			editDialogTitle.textContent = readOnly ? 'View row' : 'Edit row';
+		function openCreateDialog() { openRowDialog(undefined, false, true); }
+		function openRowDialog(row, readOnly, creating = false) {
+			dialogMode = creating ? 'create' : readOnly ? 'view' : 'edit';
+			editingRow = dialogMode === 'edit' ? row : undefined;
+			editDialogTitle.textContent = creating ? 'Create row' : readOnly ? 'View row' : 'Edit row';
 			dialogError.textContent = '';
 			cancelEdit.textContent = readOnly ? 'Close' : 'Cancel';
 			saveEdit.hidden = readOnly;
 			saveEdit.disabled = readOnly;
-			dialogFields.replaceChildren(...tableMessage.columnInfo.filter(column => readOnly || column.editable).map(column => {
+			dialogFields.replaceChildren(...tableMessage.columnInfo.filter(column => creating
+				? column.editable && !column.autoIncrement
+				: readOnly || column.editable).map(column => {
 				const columnIndex = tableMessage.columns.indexOf(column.name);
-				const value = row.editValues[columnIndex];
+				const value = creating ? '' : row.editValues[columnIndex];
 				const field = document.createElement('label');
 				field.className = 'edit-field';
 				field.dataset.column = column.name;
@@ -1001,6 +1110,19 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 				type.className = 'field-type';
 				type.textContent = (column.boolean ? 'boolean' : column.dataType) + (column.primaryKey ? ' · primary key' : '');
 				label.append(name);
+				const toggles = document.createElement('span');
+				toggles.className = 'field-toggles';
+				let defaultToggle;
+				if (creating && column.hasDefault) {
+					const defaultLabel = document.createElement('span');
+					defaultLabel.className = 'null-toggle';
+					defaultToggle = document.createElement('input');
+					defaultToggle.className = 'default-checkbox';
+					defaultToggle.type = 'checkbox';
+					defaultToggle.checked = true;
+					defaultLabel.append(defaultToggle, document.createTextNode('DEFAULT'));
+					toggles.append(defaultLabel);
+				}
 				let nullToggle;
 				if (column.nullable && !readOnly) {
 					const nullLabel = document.createElement('span');
@@ -1010,8 +1132,9 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 					nullToggle.type = 'checkbox';
 					nullToggle.checked = value === null;
 					nullLabel.append(nullToggle, document.createTextNode('NULL'));
-					label.append(nullLabel);
+					toggles.append(nullLabel);
 				}
+				label.append(toggles);
 				label.append(type);
 				const multiline = ['text', 'tinytext', 'mediumtext', 'longtext', 'json'].includes(column.dataType);
 				const input = document.createElement(column.boolean ? 'select' : multiline ? 'textarea' : 'input');
@@ -1025,8 +1148,19 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 					}
 				} else if (!multiline) input.type = inputType(column.dataType);
 				input.value = readOnly && value === null ? 'NULL' : value ?? '';
-				input.disabled = readOnly || value === null;
-				if (nullToggle) nullToggle.addEventListener('change', () => { input.disabled = nullToggle.checked; });
+				const updateInputState = () => {
+					input.disabled = readOnly || Boolean(defaultToggle?.checked) || Boolean(nullToggle?.checked);
+					input.required = creating && !column.nullable && !column.hasDefault;
+				};
+				if (defaultToggle) defaultToggle.addEventListener('change', () => {
+					if (defaultToggle.checked && nullToggle) nullToggle.checked = false;
+					updateInputState();
+				});
+				if (nullToggle) nullToggle.addEventListener('change', () => {
+					if (nullToggle.checked && defaultToggle) defaultToggle.checked = false;
+					updateInputState();
+				});
+				updateInputState();
 				field.append(label, input);
 				return field;
 			}));
@@ -1067,6 +1201,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			content.replaceChildren(element);
 			count.textContent = '';
 			pageSize.disabled = false;
+			createRow.disabled = true;
 			previousPage.disabled = true;
 			nextPage.disabled = true;
 		}
@@ -1078,3 +1213,9 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
+
+const createTableSql = `CREATE TABLE \`new_table\` (
+	\`id\` BIGINT NOT NULL AUTO_INCREMENT,
+	PRIMARY KEY (\`id\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`;
