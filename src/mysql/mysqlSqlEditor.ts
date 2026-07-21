@@ -12,11 +12,26 @@ interface SqlDocumentContext {
 	serverId: string;
 	database: string;
 	temporaryDirectory: vscode.Uri;
+	completionMetadata?: SqlCompletionMetadata;
+	completionMetadataLoad?: Promise<void>;
 }
+
+interface SqlCompletionMetadata {
+	tables: Map<string, string[]>;
+}
+
+const sqlKeywords = [
+	'SELECT', 'FROM', 'WHERE', 'INSERT INTO', 'VALUES', 'UPDATE', 'SET', 'DELETE FROM',
+	'JOIN', 'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'ON', 'AS', 'AND', 'OR', 'NOT',
+	'NULL', 'IS NULL', 'IS NOT NULL', 'IN', 'LIKE', 'BETWEEN', 'EXISTS', 'DISTINCT',
+	'GROUP BY', 'ORDER BY', 'HAVING', 'LIMIT', 'OFFSET', 'ASC', 'DESC', 'COUNT', 'SUM',
+	'AVG', 'MIN', 'MAX', 'CREATE TABLE', 'ALTER TABLE', 'DROP TABLE', 'TRUNCATE TABLE',
+];
 
 export class MysqlSqlEditorController implements vscode.Disposable {
 	private readonly documentContexts = new Map<string, SqlDocumentContext>();
 	private readonly documentSaves = new Map<string, Promise<void>>();
+	private readonly connectionStatus: vscode.StatusBarItem;
 	private readonly disposables: vscode.Disposable[];
 	private resultPanel: vscode.WebviewPanel | undefined;
 
@@ -24,8 +39,16 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 		private readonly context: vscode.ExtensionContext,
 		private readonly serverStore: ServerStore,
 	) {
+		this.connectionStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+		this.connectionStatus.name = 'MySQL SQL Connection';
 		this.disposables = [
+			this.connectionStatus,
 			vscode.commands.registerTextEditorCommand(executeCommandId, editor => this.execute(editor)),
+			vscode.languages.registerCompletionItemProvider(
+				{ language: 'sql' },
+				{ provideCompletionItems: (document, position) => this.provideCompletionItems(document, position) },
+				'.',
+			),
 			vscode.window.onDidChangeActiveTextEditor(() => this.updateActiveContext()),
 			vscode.workspace.onDidChangeTextDocument(event => this.saveDocument(event.document)),
 			vscode.workspace.onDidCloseTextDocument(document => {
@@ -43,7 +66,6 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 	}
 
 	async open(serverId: string, database: string): Promise<void> {
-		const databaseLabel = database.replaceAll('\r', ' ').replaceAll('\n', ' ');
 		const temporaryDirectory = vscode.Uri.joinPath(
 			this.context.globalStorageUri,
 			'mysql-sql',
@@ -51,9 +73,11 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 		);
 		const documentUri = vscode.Uri.joinPath(temporaryDirectory, `${safeFileName(database)}.sql`);
 		await vscode.workspace.fs.createDirectory(temporaryDirectory);
-		await vscode.workspace.fs.writeFile(documentUri, new TextEncoder().encode(`-- Database: ${databaseLabel}\n\n`));
+		await vscode.workspace.fs.writeFile(documentUri, new Uint8Array());
 		const document = await vscode.workspace.openTextDocument(documentUri);
-		this.documentContexts.set(document.uri.toString(), { serverId, database, temporaryDirectory });
+		const documentContext = { serverId, database, temporaryDirectory };
+		this.documentContexts.set(document.uri.toString(), documentContext);
+		this.ensureCompletionMetadata(documentContext);
 		await vscode.window.showTextDocument(document, {
 			preview: false,
 			viewColumn: vscode.ViewColumn.Active,
@@ -118,6 +142,101 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 				await connection.end();
 			}
 		});
+	}
+
+	private provideCompletionItems(
+		document: vscode.TextDocument,
+		position: vscode.Position,
+	): vscode.CompletionItem[] | undefined {
+		const context = this.documentContexts.get(document.uri.toString());
+		if (!context) {
+			return undefined;
+		}
+
+		const items = sqlKeywords.map((keyword, index) => {
+			const item = new vscode.CompletionItem(keyword, vscode.CompletionItemKind.Keyword);
+			item.insertText = keyword;
+			item.sortText = completionSortText(0, index, keyword);
+			return item;
+		});
+		this.ensureCompletionMetadata(context);
+		const metadata = context.completionMetadata;
+		const textBeforeCursor = document.getText(new vscode.Range(new vscode.Position(0, 0), position));
+		const qualifier = /(?:`([^`]+)`|([A-Za-z_$][\w$]*))\.\s*$/.exec(textBeforeCursor);
+		if (qualifier) {
+			const qualifierName = qualifier[1] ?? qualifier[2];
+			const columns = metadata && findQualifiedTableColumns(metadata.tables, qualifierName, textBeforeCursor);
+			return columns?.map((column, index) => createIdentifierCompletion(
+				column,
+				vscode.CompletionItemKind.Field,
+				completionSortText(0, index, column),
+			)) ?? items;
+		}
+
+		let tableIndex = 0;
+		let columnIndex = 0;
+		const { tablePriority, columnPriority } = sqlIdentifierPriorities(textBeforeCursor);
+		for (const [table, columns] of metadata?.tables ?? []) {
+			const tableItem = createIdentifierCompletion(
+				table,
+				vscode.CompletionItemKind.Struct,
+				completionSortText(tablePriority, tableIndex++, table),
+			);
+			tableItem.detail = `Table in ${context.database}`;
+			items.push(tableItem);
+			for (const column of columns) {
+				const columnItem = createIdentifierCompletion(
+					column,
+					vscode.CompletionItemKind.Field,
+					completionSortText(columnPriority, columnIndex++, column),
+				);
+				columnItem.detail = `Column in ${table}`;
+				items.push(columnItem);
+			}
+		}
+		return items;
+	}
+
+	private ensureCompletionMetadata(context: SqlDocumentContext): void {
+		context.completionMetadataLoad ??= this.loadCompletionMetadata(context)
+			.then(metadata => {
+				context.completionMetadata = metadata;
+			})
+			.catch(() => {
+				context.completionMetadata = { tables: new Map() };
+			});
+	}
+
+	private async loadCompletionMetadata(context: SqlDocumentContext): Promise<SqlCompletionMetadata> {
+		const server = this.serverStore.getServers().find(candidate => candidate.id === context.serverId);
+		if (!server || server.type !== 'mysql') {
+			return { tables: new Map() };
+		}
+		const password = await this.serverStore.getPassword(server.id);
+		if (!password) {
+			return { tables: new Map() };
+		}
+
+		const connection = await createMysqlConnection(server, password, context.database);
+		try {
+			const [rows] = await connection.query<RowDataPacket[]>(
+				`SELECT TABLE_NAME AS tableName, COLUMN_NAME AS columnName
+				FROM information_schema.COLUMNS
+				WHERE TABLE_SCHEMA = ?
+				ORDER BY TABLE_NAME, ORDINAL_POSITION`,
+				[context.database],
+			);
+			const tables = new Map<string, string[]>();
+			for (const row of rows) {
+				const tableName = String(row.tableName);
+				const columns = tables.get(tableName) ?? [];
+				columns.push(String(row.columnName));
+				tables.set(tableName, columns);
+			}
+			return { tables };
+		} finally {
+			await connection.end();
+		}
 	}
 
 	private showRows(
@@ -186,7 +305,17 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 
 	private updateActiveContext(): void {
 		const active = vscode.window.activeTextEditor;
-		const isActive = Boolean(active && this.documentContexts.has(active.document.uri.toString()));
+		const documentContext = active && this.documentContexts.get(active.document.uri.toString());
+		const isActive = Boolean(documentContext);
+		if (documentContext) {
+			const server = this.serverStore.getServers().find(candidate => candidate.id === documentContext.serverId);
+			const connectionLabel = server ? `${server.name} / ${documentContext.database}` : documentContext.database;
+			this.connectionStatus.text = `$(database) ${connectionLabel}`;
+			this.connectionStatus.tooltip = `MySQL connection: ${connectionLabel}`;
+			this.connectionStatus.show();
+		} else {
+			this.connectionStatus.hide();
+		}
 		void vscode.commands.executeCommand('setContext', activeContextKey, isActive);
 	}
 
@@ -250,6 +379,65 @@ function renderResultHtml(serverName: string, database: string, summary: string,
 function safeFileName(value: string): string {
 	const fileName = value.replaceAll(/[\\/:*?"<>|\r\n]/g, '_').trim();
 	return fileName || 'query';
+}
+
+function createIdentifierCompletion(
+	label: string,
+	kind: vscode.CompletionItemKind,
+	sortText: string,
+): vscode.CompletionItem {
+	const item = new vscode.CompletionItem(label, kind);
+	item.insertText = /^[A-Za-z_$][\w$]*$/.test(label) ? label : `\`${label.replaceAll('`', '``')}\``;
+	item.sortText = sortText;
+	return item;
+}
+
+function completionSortText(priority: number, index: number, label: string): string {
+	return `${priority.toString().padStart(2, '0')}_${index.toString().padStart(4, '0')}_${label.toLowerCase()}`;
+}
+
+function findTableColumns(tables: Map<string, string[]>, tableName: string): string[] | undefined {
+	const normalizedName = tableName.toLowerCase();
+	for (const [candidate, columns] of tables) {
+		if (candidate.toLowerCase() === normalizedName) {
+			return columns;
+		}
+	}
+	return undefined;
+}
+
+function findQualifiedTableColumns(
+	tables: Map<string, string[]>,
+	qualifier: string,
+	textBeforeCursor: string,
+): string[] | undefined {
+	const directColumns = findTableColumns(tables, qualifier);
+	if (directColumns) {
+		return directColumns;
+	}
+
+	const relationPattern = /\b(?:FROM|JOIN)\s+(?:`([^`]+)`|([A-Za-z_$][\w$]*))(?:\s+(?:AS\s+)?(?:`([^`]+)`|([A-Za-z_$][\w$]*)))?/gi;
+	for (const match of textBeforeCursor.matchAll(relationPattern)) {
+		const tableName = match[1] ?? match[2];
+		const alias = match[3] ?? match[4];
+		if (alias?.toLowerCase() === qualifier.toLowerCase()) {
+			return findTableColumns(tables, tableName);
+		}
+	}
+	return undefined;
+}
+
+function sqlIdentifierPriorities(textBeforeCursor: string): { tablePriority: number; columnPriority: number } {
+	const statementText = textBeforeCursor.slice(textBeforeCursor.lastIndexOf(';') + 1);
+	const clauses = statementText.matchAll(/\b(SELECT|FROM|JOIN|UPDATE|INTO|TABLE|DESCRIBE|DESC|SET|WHERE|ON|GROUP|ORDER|HAVING|VALUES)\b/gi);
+	let currentClause: string | undefined;
+	for (const match of clauses) {
+		currentClause = match[1].toUpperCase();
+	}
+	if (currentClause && ['FROM', 'JOIN', 'UPDATE', 'INTO', 'TABLE', 'DESCRIBE', 'DESC'].includes(currentClause)) {
+		return { tablePriority: 1, columnPriority: 2 };
+	}
+	return { tablePriority: 2, columnPriority: 1 };
 }
 
 function errorMessage(error: unknown): string {
