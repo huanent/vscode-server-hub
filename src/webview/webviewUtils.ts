@@ -5,7 +5,7 @@ export function createNonce(): string {
 }
 
 export function codiconsDistUri(extensionUri: vscode.Uri): vscode.Uri {
-	return vscode.Uri.joinPath(extensionUri, 'node_modules', '@vscode', 'codicons', 'dist');
+	return vscode.Uri.joinPath(extensionUri, 'resources', 'codicons');
 }
 
 export function escapeHtml(value: string): string {

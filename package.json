@@ -201,10 +201,12 @@
     "vscode:prepublish": "npm run prepare:webview && npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "prepare:webview": "mkdir -p resources/xterm && cp node_modules/@xterm/xterm/css/xterm.css node_modules/@xterm/xterm/lib/xterm.js node_modules/@xterm/addon-fit/lib/addon-fit.js resources/xterm/",
+    "prepare:webview": "mkdir -p resources/xterm resources/codicons && cp node_modules/@xterm/xterm/css/xterm.css node_modules/@xterm/xterm/lib/xterm.js node_modules/@xterm/addon-fit/lib/addon-fit.js resources/xterm/ && cp node_modules/@vscode/codicons/dist/codicon.css node_modules/@vscode/codicons/dist/codicon.ttf resources/codicons/",
     "pretest": "npm run compile",
     "test": "vscode-test",
-    "publish": "vsce publish"
+    "publish": "vsce publish",
+    "prepack": "npm prune",
+    "pack": "vsce pack"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -213,6 +215,9 @@
     "@types/vscode": "^1.125.0",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.0.0",
+    "@vscode/codicons": "^0.0.45",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "typescript": "^7.0.2"
   },
   "overrides": {
@@ -220,9 +225,6 @@
     "serialize-javascript": "^7.0.6"
   },
   "dependencies": {
-    "@vscode/codicons": "^0.0.45",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
     "mysql2": "^3.23.0",
     "ssh2": "^1.17.0"
   }
