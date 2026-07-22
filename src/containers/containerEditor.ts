@@ -9,10 +9,13 @@ const execFileAsync = promisify(execFile);
 type ResourceType = 'containers' | 'images' | 'volumes' | 'networks';
 
 interface ContainerEditorMessage {
-	type: 'load' | 'inspect';
+	type: 'load' | 'inspect' | 'systemAction';
 	resource?: unknown;
 	id?: unknown;
+	action?: unknown;
 }
+
+type ServiceState = 'checking' | 'running' | 'stopped' | 'error';
 
 interface ResourceRow {
 	id: string;
@@ -40,12 +43,50 @@ export function configureContainerEditor(
 			await loadResource(message.resource);
 			return;
 		}
+		if (message.type === 'systemAction'
+			&& server.runtime === 'apple'
+			&& (message.action === 'start' || message.action === 'stop')) {
+			await changeAppleSystemState(message.action);
+			return;
+		}
 		if (message.type === 'inspect' && isResourceType(message.resource) && typeof message.id === 'string') {
 			await inspectResource(message.resource, message.id);
 		}
 	});
 
+	void refreshServiceStatus();
 	void loadResource('containers');
+
+	async function refreshServiceStatus(): Promise<void> {
+		void panel.webview.postMessage({ type: 'serviceStatus', state: 'checking' satisfies ServiceState });
+		try {
+			const state = await readServiceState(server);
+			void panel.webview.postMessage({ type: 'serviceStatus', state });
+		} catch (error) {
+			void panel.webview.postMessage({ type: 'serviceStatus', state: 'error' satisfies ServiceState, message: errorMessage(error) });
+		}
+	}
+
+	async function changeAppleSystemState(action: 'start' | 'stop'): Promise<void> {
+		void panel.webview.postMessage({ type: 'systemActionPending', action });
+		try {
+			await executeContainerCommand(server, action === 'start'
+				? ['system', 'start', '--disable-kernel-install']
+				: ['system', 'stop']);
+			await refreshServiceStatus();
+			if (action === 'start') {
+				await loadResource('containers');
+			}
+		} catch (error) {
+			void panel.webview.postMessage({
+				type: 'serviceStatus',
+				state: 'error' satisfies ServiceState,
+				message: errorMessage(error),
+			});
+		} finally {
+			void panel.webview.postMessage({ type: 'systemActionComplete' });
+		}
+	}
 
 	async function loadResource(resource: ResourceType): Promise<void> {
 		void panel.webview.postMessage({ type: 'loading', resource });
@@ -76,6 +117,18 @@ async function listResource(server: ContainerServer, resource: ResourceType): Pr
 async function inspectResourceDetails(server: ContainerServer, resource: ResourceType, id: string): Promise<unknown> {
 	const output = await executeContainerCommand(server, inspectArguments(server.runtime, resource, id));
 	return JSON.parse(output);
+}
+
+async function readServiceState(server: ContainerServer): Promise<ServiceState> {
+	if (server.runtime === 'apple') {
+		const output = await executeContainerCommand(server, ['system', 'status']);
+		const match = /^status\s+(\S+)/im.exec(output);
+		return match?.[1].toLowerCase() === 'running' ? 'running' : 'stopped';
+	}
+	await executeContainerCommand(server, server.runtime === 'docker'
+		? ['info', '--format', '{{.ServerVersion}}']
+		: ['info', '--format', 'json']);
+	return 'running';
 }
 
 async function executeContainerCommand(server: ContainerServer, args: string[]): Promise<string> {
@@ -209,7 +262,8 @@ function normalizeAppleResourceRow(resource: ResourceType, value: Record<string,
 		}
 		case 'images': {
 			const descriptor = recordValue(configuration.descriptor);
-			return { id, name: stringValue(configuration, 'name') || shortId(id), status: stringValue(configuration, 'creationDate'), detail: shortId(id), size: formatBytes(numberValue(descriptor.size)) };
+			const name = stringValue(configuration, 'name');
+			return { id: name || id, name: name || shortId(id), status: stringValue(configuration, 'creationDate'), detail: shortId(id), size: formatBytes(numberValue(descriptor.size)) };
 		}
 		case 'volumes': return { id, name: stringValue(configuration, 'name') || id, status: stringValue(configuration, 'driver', 'format'), detail: stringValue(configuration, 'mountPoint', 'path'), size: '' };
 		case 'networks': return { id, name: stringValue(configuration, 'name') || id, status: stringValue(configuration, 'plugin', 'mode'), detail: [stringValue(status, 'ipv4Subnet'), stringValue(status, 'ipv6Subnet')].filter(Boolean).join(' · '), size: '' };
@@ -230,21 +284,30 @@ function renderContainerEditor(webview: vscode.Webview, extensionUri: vscode.Uri
 	<style>
 		:root { color-scheme: light dark; }
 		* { box-sizing: border-box; }
-		body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
-		.app { display: grid; grid-template-columns: 190px minmax(0, 1fr); min-height: 100vh; }
-		.sidebar { position: sticky; top: 0; height: 100vh; padding: 16px 10px; border-right: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); }
-		.brand { padding: 0 10px 16px; border-bottom: 1px solid var(--vscode-panel-border); }
-		.brand strong { display: block; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
-		.brand span { display: block; margin-top: 4px; overflow: hidden; color: var(--vscode-descriptionForeground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-		.nav { display: grid; gap: 2px; margin-top: 12px; }
+		html, body { width: 100%; min-width: 300px; height: 100%; margin: 0; overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
+		body { display: grid; grid-template-rows: 42px minmax(0, 1fr); padding: 4px; user-select: none; }
+		button { font: inherit; }
+		.toolbar { display: flex; min-width: 0; padding: 0 8px; align-items: center; gap: 10px; border-bottom: 1px solid var(--vscode-panel-border); }
+		.connection-name { min-width: 0; overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+		.runtime { color: var(--vscode-descriptionForeground); font-size: 12px; text-transform: capitalize; }
+		.service-status { display: inline-flex; min-width: 0; margin-left: auto; align-items: center; gap: 6px; color: var(--vscode-descriptionForeground); font-size: 12px; }
+		.service-status .codicon { font-size: 13px; }
+		.service-status.running { color: var(--vscode-testing-iconPassed, var(--vscode-charts-green)); }
+		.service-status.stopped, .service-status.error { color: var(--vscode-errorForeground); }
+		.system-actions { display: flex; align-items: center; gap: 2px; }
+		.workspace { display: grid; min-width: 0; min-height: 0; grid-template-columns: 190px minmax(0, 1fr); }
+		.sidebar { min-width: 0; min-height: 0; padding: 8px 6px; overflow: auto; border-right: 1px solid var(--vscode-panel-border); }
+		.nav { display: grid; gap: 2px; }
 		.nav-button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 5px 9px; color: var(--vscode-foreground); background: transparent; border: 0; border-radius: 4px; font: inherit; text-align: left; cursor: pointer; }
 		.nav-button:hover { background: var(--vscode-list-hoverBackground); }
 		.nav-button[aria-selected="true"] { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
-		.main { min-width: 0; }
-		.toolbar { position: sticky; z-index: 2; top: 0; display: flex; align-items: center; justify-content: space-between; min-height: 52px; padding: 10px 18px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
-		h1 { margin: 0; font-size: 18px; font-weight: 650; }
+		.main { min-width: 0; min-height: 0; overflow: auto; }
+		.resource-header { position: sticky; z-index: 2; top: 0; display: flex; min-height: 38px; padding: 0 12px 0 18px; align-items: center; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
+		h1 { margin: 0; font-size: 13px; font-weight: 600; }
 		.icon-button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; color: var(--vscode-foreground); background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
-		.icon-button:hover { background: var(--vscode-toolbar-hoverBackground); }
+		.icon-button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
+		.icon-button:disabled { opacity: 0.4; cursor: default; }
+		.resource-header .icon-button { margin-left: auto; }
 		.content { padding: 18px; }
 		.message { padding: 28px 12px; color: var(--vscode-descriptionForeground); text-align: center; }
 		.error { color: var(--vscode-errorForeground); }
@@ -264,22 +327,29 @@ function renderContainerEditor(webview: vscode.Webview, extensionUri: vscode.Uri
 		pre { max-height: 46vh; margin: 0; overflow: auto; padding: 12px; color: var(--vscode-editor-foreground); background: var(--vscode-textCodeBlock-background); border-radius: 4px; font: 12px/1.55 var(--vscode-editor-font-family); white-space: pre-wrap; word-break: break-word; }
 		[hidden] { display: none !important; }
 		@media (max-width: 640px) {
-			.app { grid-template-columns: 1fr; }
-			.sidebar { position: sticky; z-index: 3; height: auto; padding: 8px 10px; border-right: 0; border-bottom: 1px solid var(--vscode-panel-border); }
-			.brand { display: none; }
+			.workspace { grid-template-columns: 1fr; grid-template-rows: 41px minmax(0, 1fr); }
+			.sidebar { z-index: 3; padding: 4px 8px; overflow: visible; border-right: 0; border-bottom: 1px solid var(--vscode-panel-border); }
 			.nav { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
 			.nav-button { justify-content: center; padding-inline: 4px; }
 			.nav-button span:last-child { display: none; }
-			.toolbar { top: 49px; }
 			.content { padding: 12px; }
 			.size { display: none; }
+			.runtime { display: none; }
 		}
 	</style>
 </head>
 <body>
-	<div class="app">
+	<header class="toolbar">
+		<span class="connection-name" title="${escapeHtml(server.executablePath)}">${escapeHtml(server.name)}</span>
+		<span class="runtime">${escapeHtml(server.runtime)}</span>
+		<span id="service-status" class="service-status checking" role="status" aria-live="polite"><i class="codicon codicon-loading codicon-modifier-spin"></i><span>Checking service</span></span>
+		${server.runtime === 'apple' ? `<div class="system-actions" role="toolbar" aria-label="Apple Container system">
+			<button id="system-start" class="icon-button" type="button" title="Start Apple Container system" aria-label="Start Apple Container system" disabled><i class="codicon codicon-play"></i></button>
+			<button id="system-stop" class="icon-button" type="button" title="Stop Apple Container system" aria-label="Stop Apple Container system" disabled><i class="codicon codicon-debug-stop"></i></button>
+		</div>` : ''}
+	</header>
+	<div class="workspace">
 		<aside class="sidebar">
-			<div class="brand"><strong>${escapeHtml(server.name)}</strong><span>${escapeHtml(server.runtime)} · ${escapeHtml(server.executablePath)}</span></div>
 			<nav class="nav" aria-label="Container resources">
 				<button class="nav-button" data-resource="containers" aria-selected="true"><span class="codicon codicon-server-process"></span><span>Containers</span></button>
 				<button class="nav-button" data-resource="images" aria-selected="false"><span class="codicon codicon-package"></span><span>Images</span></button>
@@ -288,7 +358,7 @@ function renderContainerEditor(webview: vscode.Webview, extensionUri: vscode.Uri
 			</nav>
 		</aside>
 		<main class="main">
-			<header class="toolbar"><h1 id="title">Containers</h1><button id="refresh" class="icon-button codicon codicon-refresh" title="Refresh" aria-label="Refresh"></button></header>
+			<header class="resource-header"><h1 id="title">Containers</h1><button id="refresh" class="icon-button" type="button" title="Refresh" aria-label="Refresh"><i class="codicon codicon-refresh"></i></button></header>
 			<div class="content">
 				<div id="message" class="message">Connecting...</div>
 				<div id="table-wrap" class="table-wrap" hidden>
@@ -307,7 +377,12 @@ function renderContainerEditor(webview: vscode.Webview, extensionUri: vscode.Uri
 		const rows = document.getElementById('rows');
 		const details = document.getElementById('details');
 		const detailsContent = document.getElementById('details-content');
+		const serviceStatus = document.getElementById('service-status');
+		const systemStart = document.getElementById('system-start');
+		const systemStop = document.getElementById('system-stop');
 		let resource = 'containers';
+		let serviceState = 'checking';
+		let systemActionPending = false;
 		const load = () => vscode.postMessage({ type: 'load', resource });
 		for (const button of document.querySelectorAll('.nav-button')) {
 			button.addEventListener('click', () => {
@@ -319,8 +394,31 @@ function renderContainerEditor(webview: vscode.Webview, extensionUri: vscode.Uri
 			});
 		}
 		document.getElementById('refresh').addEventListener('click', load);
+		systemStart?.addEventListener('click', () => vscode.postMessage({ type: 'systemAction', action: 'start' }));
+		systemStop?.addEventListener('click', () => vscode.postMessage({ type: 'systemAction', action: 'stop' }));
 		window.addEventListener('message', event => {
 			const data = event.data;
+			if (data.type === 'serviceStatus') {
+				serviceState = data.state;
+				const labels = { checking: 'Checking service', running: 'Running', stopped: 'Stopped', error: data.message || 'Unavailable' };
+				const icons = { checking: 'loading codicon-modifier-spin', running: 'pass-filled', stopped: 'circle-slash', error: 'error' };
+				serviceStatus.className = 'service-status ' + serviceState;
+				serviceStatus.title = data.message || labels[serviceState];
+				serviceStatus.replaceChildren(Object.assign(document.createElement('i'), { className: 'codicon codicon-' + icons[serviceState] }), Object.assign(document.createElement('span'), { textContent: labels[serviceState] }));
+				updateSystemActions();
+				return;
+			}
+			if (data.type === 'systemActionPending') {
+				systemActionPending = true;
+				serviceStatus.querySelector('span').textContent = data.action === 'start' ? 'Starting...' : 'Stopping...';
+				updateSystemActions();
+				return;
+			}
+			if (data.type === 'systemActionComplete') {
+				systemActionPending = false;
+				updateSystemActions();
+				return;
+			}
 			if (data.resource && data.resource !== resource) return;
 			if (data.type === 'loading') {
 				message.className = 'message';
@@ -363,6 +461,11 @@ function renderContainerEditor(webview: vscode.Webview, extensionUri: vscode.Uri
 			if (data.type === 'details') detailsContent.textContent = JSON.stringify(data.details, null, 2);
 			if (data.type === 'detailsError') detailsContent.textContent = data.message;
 		});
+		function updateSystemActions() {
+			if (!systemStart || !systemStop) return;
+			systemStart.disabled = systemActionPending || serviceState === 'checking' || serviceState === 'running';
+			systemStop.disabled = systemActionPending || serviceState !== 'running';
+		}
 	</script>
 </body>
 </html>`;
