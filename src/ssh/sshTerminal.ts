@@ -1,8 +1,10 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
+import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
+import { Duplex } from 'stream';
 import { Client, ClientChannel, FileEntryWithStats, SFTPWrapper } from 'ssh2';
 import { RemoteMetricsFormatter, RemoteMetricsReader } from './remoteMetrics';
 import { SshServer } from '../servers/server';
@@ -66,7 +68,7 @@ export function configureSshTerminal(
 		enableScripts: true,
 		localResourceRoots: [resourcesRoot, codiconsDistUri(extensionUri)],
 	};
-	panel.iconPath = new vscode.ThemeIcon('terminal-linux');
+	panel.iconPath = new vscode.ThemeIcon('terminal');
 	panel.webview.html = renderSshTerminal(panel.webview, extensionUri, xtermRoot, server);
 
 	const session = new SshWebviewSession(panel, server, credentials);
@@ -91,6 +93,7 @@ class SshWebviewSession {
 	private readonly metricsFormatter = new RemoteMetricsFormatter();
 	private shellStream: ClientChannel | undefined;
 	private sftp: SFTPWrapper | undefined;
+	private proxyProcess: ChildProcessWithoutNullStreams | undefined;
 	private dimensions: { rows: number; columns: number } | undefined;
 	private metricsTimer: NodeJS.Timeout | undefined;
 	private metricsRequestPending = false;
@@ -191,10 +194,12 @@ class SshWebviewSession {
 		this.shellStream?.close();
 		this.sftp?.end();
 		this.client.end();
+		this.stopProxyProcess();
 	}
 
 	private connect(): void {
 		this.postMessage({ type: 'status', status: 'connecting', message: `${this.server.username}@${this.server.host}:${this.server.port}...` });
+		const proxySocket = this.server.proxyCommand ? this.startProxyCommand(this.server.proxyCommand) : undefined;
 		this.client
 			.on('keyboard-interactive', (_name, _instructions, _language, prompts, finish) => {
 				finish(prompts.map(() => this.credentials.password ?? ''));
@@ -205,11 +210,42 @@ class SshWebviewSession {
 				host: this.server.host,
 				port: this.server.port,
 				username: this.server.username,
+				...(proxySocket ? { sock: proxySocket } : {}),
 				...(this.server.authType === 'privateKey'
 					? { privateKey: this.credentials.privateKey, passphrase: this.credentials.passphrase }
 					: { password: this.credentials.password, tryKeyboard: true }),
 				readyTimeout: 15_000,
 			});
+	}
+
+	private startProxyCommand(command: string): Duplex {
+		const proxyProcess = spawn(command, {
+			shell: true,
+			stdio: ['pipe', 'pipe', 'pipe'],
+		});
+		this.proxyProcess = proxyProcess;
+		let stderr = '';
+		proxyProcess.stderr.setEncoding('utf8');
+		proxyProcess.stderr.on('data', data => {
+			stderr = (stderr + data).slice(-4000);
+		});
+		proxyProcess.on('error', error => this.handleConnectionFailure(error));
+		proxyProcess.on('exit', (code, signal) => {
+			if (this.disposed || this.failed || this.connected) {
+				return;
+			}
+			const detail = stderr.trim();
+			const reason = detail || `Proxy command exited with ${signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`}.`;
+			this.handleConnectionFailure(new Error(reason));
+		});
+		return Duplex.from({ readable: proxyProcess.stdout, writable: proxyProcess.stdin });
+	}
+
+	private stopProxyProcess(): void {
+		if (this.proxyProcess && this.proxyProcess.exitCode === null && this.proxyProcess.signalCode === null) {
+			this.proxyProcess.kill();
+		}
+		this.proxyProcess = undefined;
 	}
 
 	private openRemoteShell(): void {
@@ -614,6 +650,7 @@ class SshWebviewSession {
 		this.connected = false;
 		this.stopMetricsPolling();
 		this.client.end();
+		this.stopProxyProcess();
 		this.postMessage({ type: 'status', status: 'closed', message: 'Connection closed' });
 	}
 
@@ -630,6 +667,7 @@ class SshWebviewSession {
 			: error.message;
 		this.postMessage({ type: 'status', status: 'error', message: reason });
 		this.client.end();
+		this.stopProxyProcess();
 	}
 
 	private postMessage(message: unknown): void {

@@ -7,7 +7,7 @@ export class ServerTreeItem extends vscode.TreeItem {
 		super(server.name, vscode.TreeItemCollapsibleState.None);
 		this.description = serverDescription(server);
 		this.tooltip = `${server.name}\n${this.description}`;
-		this.iconPath = new vscode.ThemeIcon(server.type === 'mysql' ? 'database' : server.type === 'container' ? 'server-process' : 'terminal-linux');
+		this.iconPath = new vscode.ThemeIcon(server.type === 'mysql' ? 'database' : server.type === 'container' ? 'server-process' : 'terminal');
 		this.contextValue = `${server.type}Server`;
 	}
 }

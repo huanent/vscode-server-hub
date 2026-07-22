@@ -16,6 +16,7 @@ export interface NetworkServer extends BaseServer {
 export interface SshServer extends NetworkServer {
 	type: 'ssh';
 	authType: 'password' | 'privateKey';
+	proxyCommand?: string;
 }
 
 export interface MysqlServer extends NetworkServer {
@@ -38,7 +39,7 @@ export type ExportedServer = Server & {
 };
 
 export interface ServerExportFile {
-	version: 5;
+	version: 6;
 	servers: ExportedServer[];
 }
 
@@ -50,6 +51,7 @@ export interface ServerFormMessage {
 	port?: unknown;
 	username?: unknown;
 	authType?: unknown;
+	proxyCommand?: unknown;
 	password?: unknown;
 	privateKey?: unknown;
 	passphrase?: unknown;
@@ -111,6 +113,7 @@ export function parseServerForm(
 		...baseServer,
 		type: 'ssh',
 		authType: message.authType === 'privateKey' ? 'privateKey' : 'password',
+		...(normalizeString(message.proxyCommand) ? { proxyCommand: normalizeString(message.proxyCommand) } : {}),
 	};
 }
 
@@ -129,7 +132,7 @@ export function parseStoredServers(value: unknown): Server[] {
 }
 
 export function parseServerExport(value: unknown): ExportedServer[] {
-	if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3 && value.version !== 4 && value.version !== 5) || !Array.isArray(value.servers)) {
+	if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3 && value.version !== 4 && value.version !== 5 && value.version !== 6) || !Array.isArray(value.servers)) {
 		throw new Error('The file is not a supported ServerHub export.');
 	}
 
@@ -189,6 +192,7 @@ function parseServer(value: unknown, requireType: boolean): Server {
 		port: value.port,
 		username: value.username,
 		authType: value.authType,
+		proxyCommand: value.proxyCommand,
 		database: value.database,
 		runtime: value.runtime,
 		executablePath: value.executablePath,

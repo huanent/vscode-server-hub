@@ -7,6 +7,7 @@ ServerHub keeps SSH and MySQL connections close to your VS Code workspace.
 - Dedicated ServerHub view in the Activity Bar.
 - Add SSH or MySQL servers from the view title menu.
 - Open interactive SSH sessions using password or private key certificate authentication.
+- Route SSH connections through an optional proxy command, such as `cloudflared access tcp --hostname host.example.com`.
 - Open MySQL connections in an editor, switch databases, and browse table metadata in list or grid view.
 - Double-click a MySQL table to preview its first 100 rows in a separate editor.
 - Edit or delete saved servers from the tree context menu.

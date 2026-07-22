@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -36,7 +36,7 @@
         {
           "id": "server-hub",
           "title": "ServerHub",
-          "icon": "resources/server.svg"
+          "icon": "$(server)"
         }
       ]
     },
@@ -45,7 +45,7 @@
         {
           "id": "server-hub.servers",
           "name": "ServerHub",
-          "icon": "resources/server.svg"
+          "icon": "$(server)"
         }
       ]
     },

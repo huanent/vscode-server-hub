@@ -401,6 +401,7 @@ function renderServerFields(
 	const defaultPort = serverType === 'mysql' ? 3306 : 22;
 	const database = server?.type === 'mysql' ? server.database : '';
 	const authType = server?.type === 'ssh' ? server.authType : 'password';
+	const proxyCommand = server?.type === 'ssh' ? server.proxyCommand ?? '' : '';
 	return `<div class="connection">
 		<label class="field">
 			<span class="field-label">Host <span class="required" aria-hidden="true">*</span></span>
@@ -415,6 +416,10 @@ function renderServerFields(
 		<span class="field-label">Username <span class="required" aria-hidden="true">*</span></span>
 		<input name="username" autocomplete="username" required placeholder="root" value="${escapeHtml(networkServer?.username ?? '')}">
 	</label>
+	${serverType === 'ssh' ? `<label class="field">
+		<span class="field-label">Proxy command</span>
+		<input name="proxyCommand" autocomplete="off" spellcheck="false" placeholder="cloudflared access tcp --hostname example.com" value="${escapeHtml(proxyCommand)}">
+	</label>` : ''}
 	${serverType === 'mysql' ? `<label class="field">
 		<span class="field-label">Database <span class="required" aria-hidden="true">*</span></span>
 		<input name="database" autocomplete="off" required placeholder="app" value="${escapeHtml(database)}">
