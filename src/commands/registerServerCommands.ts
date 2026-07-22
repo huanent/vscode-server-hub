@@ -48,7 +48,7 @@ export function registerServerCommands(
 		),
 		vscode.commands.registerCommand(
 			commandIds.copyHost,
-			(item: ServerTreeItem) => vscode.env.clipboard.writeText(item.server.host),
+			(item: ServerTreeItem) => vscode.env.clipboard.writeText(getConnectionAddress(item.server)),
 		),
 		vscode.commands.registerCommand(
 			commandIds.editServer,
@@ -71,6 +71,14 @@ export function registerServerCommands(
 	);
 }
 
+function getConnectionAddress(server: Server): string {
+	switch (server.type) {
+		case 'container': return server.executablePath;
+		case 'mysql': return server.host;
+		case 'ssh': return server.host;
+	}
+}
+
 async function searchServers(treeDataProvider: ServerTreeDataProvider): Promise<void> {
 	const filter = await vscode.window.showInputBox({
 		title: 'Search Servers',
@@ -87,6 +95,7 @@ async function selectAndAddServer(): Promise<void> {
 	const selection = await vscode.window.showQuickPick<{ label: string; description: string; type: ServerType }>([
 		{ label: 'SSH', description: 'Interactive remote terminal', type: 'ssh' },
 		{ label: 'MySQL', description: 'Browse tables and preview data', type: 'mysql' },
+		{ label: 'Container', description: 'Browse Docker or Podman or Apple Container resources', type: 'container' },
 	], { title: 'Add Server', placeHolder: 'Select a server type' });
 	if (selection) {
 		await openServerForm(selection.type);

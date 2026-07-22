@@ -1,0 +1,430 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import * as vscode from 'vscode';
+import { ContainerServer } from '../servers/server';
+import { codiconsDistUri, createNonce, escapeHtml } from '../webview/webviewUtils';
+
+const execFileAsync = promisify(execFile);
+
+type ResourceType = 'containers' | 'images' | 'volumes' | 'networks';
+
+interface ContainerEditorMessage {
+	type: 'load' | 'inspect';
+	resource?: unknown;
+	id?: unknown;
+}
+
+interface ResourceRow {
+	id: string;
+	name: string;
+	status: string;
+	detail: string;
+	size: string;
+}
+
+export function configureContainerEditor(
+	extensionUri: vscode.Uri,
+	panel: vscode.WebviewPanel,
+	server: ContainerServer,
+): void {
+	panel.title = server.name;
+	panel.iconPath = new vscode.ThemeIcon('server-process');
+	panel.webview.options = {
+		enableScripts: true,
+		localResourceRoots: [codiconsDistUri(extensionUri)],
+	};
+	panel.webview.html = renderContainerEditor(panel.webview, extensionUri, server);
+
+	panel.webview.onDidReceiveMessage(async (message: ContainerEditorMessage) => {
+		if (message.type === 'load' && isResourceType(message.resource)) {
+			await loadResource(message.resource);
+			return;
+		}
+		if (message.type === 'inspect' && isResourceType(message.resource) && typeof message.id === 'string') {
+			await inspectResource(message.resource, message.id);
+		}
+	});
+
+	void loadResource('containers');
+
+	async function loadResource(resource: ResourceType): Promise<void> {
+		void panel.webview.postMessage({ type: 'loading', resource });
+		try {
+			const rows = await listResource(server, resource);
+			void panel.webview.postMessage({ type: 'resource', resource, rows });
+		} catch (error) {
+			void panel.webview.postMessage({ type: 'error', resource, message: errorMessage(error) });
+		}
+	}
+
+	async function inspectResource(resource: ResourceType, id: string): Promise<void> {
+		try {
+			const details = await inspectResourceDetails(server, resource, id);
+			void panel.webview.postMessage({ type: 'details', resource, id, details });
+		} catch (error) {
+			void panel.webview.postMessage({ type: 'detailsError', message: errorMessage(error) });
+		}
+	}
+}
+
+async function listResource(server: ContainerServer, resource: ResourceType): Promise<ResourceRow[]> {
+	const output = await executeContainerCommand(server, listArguments(server.runtime, resource));
+	const values = parseListOutput(output, server.runtime);
+	return values.map(value => normalizeResourceRow(server.runtime, resource, value));
+}
+
+async function inspectResourceDetails(server: ContainerServer, resource: ResourceType, id: string): Promise<unknown> {
+	const output = await executeContainerCommand(server, inspectArguments(server.runtime, resource, id));
+	return JSON.parse(output);
+}
+
+async function executeContainerCommand(server: ContainerServer, args: string[]): Promise<string> {
+	try {
+		const { stdout } = await execFileAsync(server.executablePath, args, {
+			encoding: 'utf8',
+			maxBuffer: 20 * 1024 * 1024,
+		});
+		return stdout.trim();
+	} catch (error) {
+		if (isExecError(error)) {
+			const detail = error.stderr?.trim() || error.message;
+			throw new Error(`${server.runtime} command failed: ${detail}`);
+		}
+		throw error;
+	}
+}
+
+function listArguments(runtime: ContainerServer['runtime'], resource: ResourceType): string[] {
+	if (runtime === 'apple') {
+		switch (resource) {
+			case 'containers': return ['list', '--all', '--format', 'json'];
+			case 'images': return ['image', 'list', '--format', 'json'];
+			case 'volumes': return ['volume', 'list', '--format', 'json'];
+			case 'networks': return ['network', 'list', '--format', 'json'];
+		}
+	}
+	if (runtime === 'podman') {
+		switch (resource) {
+			case 'containers': return ['ps', '--all', '--format', 'json'];
+			case 'images': return ['image', 'ls', '--format', 'json'];
+			case 'volumes': return ['volume', 'ls', '--format', 'json'];
+			case 'networks': return ['network', 'ls', '--format', 'json'];
+		}
+	}
+	switch (resource) {
+		case 'containers': return ['ps', '--all', '--format', '{{json .}}'];
+		case 'images': return ['image', 'ls', '--format', '{{json .}}'];
+		case 'volumes': return ['volume', 'ls', '--format', '{{json .}}'];
+		case 'networks': return ['network', 'ls', '--format', '{{json .}}'];
+	}
+}
+
+function inspectArguments(runtime: ContainerServer['runtime'], resource: ResourceType, id: string): string[] {
+	if (runtime === 'apple') {
+		switch (resource) {
+			case 'containers': return ['inspect', id];
+			case 'images': return ['image', 'inspect', id];
+			case 'volumes': return ['volume', 'inspect', id];
+			case 'networks': return ['network', 'inspect', id];
+		}
+	}
+	switch (resource) {
+		case 'containers': return ['inspect', id];
+		case 'images': return ['image', 'inspect', id];
+		case 'volumes': return ['volume', 'inspect', id];
+		case 'networks': return ['network', 'inspect', id];
+	}
+}
+
+function parseListOutput(output: string, runtime: ContainerServer['runtime']): Record<string, unknown>[] {
+	if (!output) {
+		return [];
+	}
+	if (runtime !== 'docker') {
+		const parsed: unknown = JSON.parse(output);
+		if (!Array.isArray(parsed)) {
+			throw new Error(`Unexpected ${runtime} list output.`);
+		}
+		return parsed.filter(isRecord);
+	}
+	return output.split(/\r?\n/).filter(Boolean).map(line => {
+		const value: unknown = JSON.parse(line);
+		if (!isRecord(value)) {
+			throw new Error('Unexpected docker list output.');
+		}
+		return value;
+	});
+}
+
+function normalizeResourceRow(
+	runtime: ContainerServer['runtime'],
+	resource: ResourceType,
+	value: Record<string, unknown>,
+): ResourceRow {
+	if (runtime === 'apple') {
+		return normalizeAppleResourceRow(resource, value);
+	}
+	switch (resource) {
+		case 'containers': {
+			const id = stringValue(value, 'ID', 'Id', 'Id', 'id');
+			return {
+				id,
+				name: displayValue(value.Names) || stringValue(value, 'Name', 'Names') || shortId(id),
+				status: stringValue(value, 'State', 'Status'),
+				detail: [stringValue(value, 'Image'), stringValue(value, 'Status')].filter(Boolean).join(' · '),
+				size: displayValue(value.Size),
+			};
+		}
+		case 'images': {
+			const id = stringValue(value, 'ID', 'Id', 'id');
+			const repository = stringValue(value, 'Repository', 'RepoTags', 'Names');
+			const tag = stringValue(value, 'Tag');
+			return {
+				id,
+				name: tag && repository ? `${repository}:${tag}` : repository || '<none>',
+				status: stringValue(value, 'CreatedSince', 'CreatedAt', 'Created'),
+				detail: shortId(id),
+				size: displayValue(value.Size),
+			};
+		}
+		case 'volumes': {
+			const name = stringValue(value, 'Name', 'name');
+			return { id: name, name, status: stringValue(value, 'Driver', 'driver'), detail: stringValue(value, 'Mountpoint', 'Scope'), size: '' };
+		}
+		case 'networks': {
+			const id = stringValue(value, 'ID', 'Id', 'id', 'Name');
+			return { id, name: stringValue(value, 'Name', 'name') || shortId(id), status: stringValue(value, 'Driver', 'driver'), detail: stringValue(value, 'Scope', 'NetworkInterface'), size: '' };
+		}
+	}
+}
+
+function normalizeAppleResourceRow(resource: ResourceType, value: Record<string, unknown>): ResourceRow {
+	const configuration = recordValue(value.configuration);
+	const status = recordValue(value.status);
+	const id = stringValue(value, 'id') || stringValue(configuration, 'id', 'name');
+	switch (resource) {
+		case 'containers': {
+			const image = recordValue(configuration.image);
+			return { id, name: stringValue(configuration, 'id') || id, status: stringValue(status, 'state'), detail: stringValue(image, 'reference'), size: '' };
+		}
+		case 'images': {
+			const descriptor = recordValue(configuration.descriptor);
+			return { id, name: stringValue(configuration, 'name') || shortId(id), status: stringValue(configuration, 'creationDate'), detail: shortId(id), size: formatBytes(numberValue(descriptor.size)) };
+		}
+		case 'volumes': return { id, name: stringValue(configuration, 'name') || id, status: stringValue(configuration, 'driver', 'format'), detail: stringValue(configuration, 'mountPoint', 'path'), size: '' };
+		case 'networks': return { id, name: stringValue(configuration, 'name') || id, status: stringValue(configuration, 'plugin', 'mode'), detail: [stringValue(status, 'ipv4Subnet'), stringValue(status, 'ipv6Subnet')].filter(Boolean).join(' · '), size: '' };
+	}
+}
+
+function renderContainerEditor(webview: vscode.Webview, extensionUri: vscode.Uri, server: ContainerServer): string {
+	const nonce = createNonce();
+	const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(codiconsDistUri(extensionUri), 'codicon.css'));
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+	<link rel="stylesheet" href="${codiconsUri}">
+	<title>${escapeHtml(server.name)}</title>
+	<style>
+		:root { color-scheme: light dark; }
+		* { box-sizing: border-box; }
+		body { margin: 0; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
+		.app { display: grid; grid-template-columns: 190px minmax(0, 1fr); min-height: 100vh; }
+		.sidebar { position: sticky; top: 0; height: 100vh; padding: 16px 10px; border-right: 1px solid var(--vscode-panel-border); background: var(--vscode-sideBar-background); }
+		.brand { padding: 0 10px 16px; border-bottom: 1px solid var(--vscode-panel-border); }
+		.brand strong { display: block; overflow: hidden; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+		.brand span { display: block; margin-top: 4px; overflow: hidden; color: var(--vscode-descriptionForeground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+		.nav { display: grid; gap: 2px; margin-top: 12px; }
+		.nav-button { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; padding: 5px 9px; color: var(--vscode-foreground); background: transparent; border: 0; border-radius: 4px; font: inherit; text-align: left; cursor: pointer; }
+		.nav-button:hover { background: var(--vscode-list-hoverBackground); }
+		.nav-button[aria-selected="true"] { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
+		.main { min-width: 0; }
+		.toolbar { position: sticky; z-index: 2; top: 0; display: flex; align-items: center; justify-content: space-between; min-height: 52px; padding: 10px 18px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); }
+		h1 { margin: 0; font-size: 18px; font-weight: 650; }
+		.icon-button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; color: var(--vscode-foreground); background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
+		.icon-button:hover { background: var(--vscode-toolbar-hoverBackground); }
+		.content { padding: 18px; }
+		.message { padding: 28px 12px; color: var(--vscode-descriptionForeground); text-align: center; }
+		.error { color: var(--vscode-errorForeground); }
+		.table-wrap { overflow: auto; border: 1px solid var(--vscode-panel-border); border-radius: 4px; }
+		table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+		th, td { padding: 8px 10px; overflow: hidden; border-bottom: 1px solid var(--vscode-panel-border); text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+		th { position: sticky; top: 0; color: var(--vscode-descriptionForeground); background: var(--vscode-editor-background); font-size: 11px; font-weight: 650; text-transform: uppercase; }
+		tbody tr { cursor: pointer; }
+		tbody tr:hover { background: var(--vscode-list-hoverBackground); }
+		tbody tr.selected { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
+		.name { width: 28%; }
+		.status { width: 17%; }
+		.size { width: 100px; }
+		.details { margin-top: 18px; border-top: 1px solid var(--vscode-panel-border); }
+		.details-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 0 10px; }
+		.details h2 { margin: 0; font-size: 14px; }
+		pre { max-height: 46vh; margin: 0; overflow: auto; padding: 12px; color: var(--vscode-editor-foreground); background: var(--vscode-textCodeBlock-background); border-radius: 4px; font: 12px/1.55 var(--vscode-editor-font-family); white-space: pre-wrap; word-break: break-word; }
+		[hidden] { display: none !important; }
+		@media (max-width: 640px) {
+			.app { grid-template-columns: 1fr; }
+			.sidebar { position: sticky; z-index: 3; height: auto; padding: 8px 10px; border-right: 0; border-bottom: 1px solid var(--vscode-panel-border); }
+			.brand { display: none; }
+			.nav { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
+			.nav-button { justify-content: center; padding-inline: 4px; }
+			.nav-button span:last-child { display: none; }
+			.toolbar { top: 49px; }
+			.content { padding: 12px; }
+			.size { display: none; }
+		}
+	</style>
+</head>
+<body>
+	<div class="app">
+		<aside class="sidebar">
+			<div class="brand"><strong>${escapeHtml(server.name)}</strong><span>${escapeHtml(server.runtime)} · ${escapeHtml(server.executablePath)}</span></div>
+			<nav class="nav" aria-label="Container resources">
+				<button class="nav-button" data-resource="containers" aria-selected="true"><span class="codicon codicon-server-process"></span><span>Containers</span></button>
+				<button class="nav-button" data-resource="images" aria-selected="false"><span class="codicon codicon-package"></span><span>Images</span></button>
+				<button class="nav-button" data-resource="volumes" aria-selected="false"><span class="codicon codicon-database"></span><span>Volumes</span></button>
+				<button class="nav-button" data-resource="networks" aria-selected="false"><span class="codicon codicon-type-hierarchy-sub"></span><span>Networks</span></button>
+			</nav>
+		</aside>
+		<main class="main">
+			<header class="toolbar"><h1 id="title">Containers</h1><button id="refresh" class="icon-button codicon codicon-refresh" title="Refresh" aria-label="Refresh"></button></header>
+			<div class="content">
+				<div id="message" class="message">Connecting...</div>
+				<div id="table-wrap" class="table-wrap" hidden>
+					<table><thead><tr><th class="name">Name</th><th class="status">Status</th><th>Details</th><th class="size">Size</th></tr></thead><tbody id="rows"></tbody></table>
+				</div>
+				<section id="details" class="details" hidden><div class="details-header"><h2>Details</h2></div><pre id="details-content"></pre></section>
+			</div>
+		</main>
+	</div>
+	<script nonce="${nonce}">
+		const vscode = acquireVsCodeApi();
+		const labels = { containers: 'Containers', images: 'Images', volumes: 'Volumes', networks: 'Networks' };
+		const title = document.getElementById('title');
+		const message = document.getElementById('message');
+		const tableWrap = document.getElementById('table-wrap');
+		const rows = document.getElementById('rows');
+		const details = document.getElementById('details');
+		const detailsContent = document.getElementById('details-content');
+		let resource = 'containers';
+		const load = () => vscode.postMessage({ type: 'load', resource });
+		for (const button of document.querySelectorAll('.nav-button')) {
+			button.addEventListener('click', () => {
+				resource = button.dataset.resource;
+				title.textContent = labels[resource];
+				for (const candidate of document.querySelectorAll('.nav-button')) candidate.setAttribute('aria-selected', String(candidate === button));
+				details.hidden = true;
+				load();
+			});
+		}
+		document.getElementById('refresh').addEventListener('click', load);
+		window.addEventListener('message', event => {
+			const data = event.data;
+			if (data.resource && data.resource !== resource) return;
+			if (data.type === 'loading') {
+				message.className = 'message';
+				message.textContent = 'Loading...';
+				message.hidden = false;
+				tableWrap.hidden = true;
+				return;
+			}
+			if (data.type === 'error') {
+				message.className = 'message error';
+				message.textContent = data.message;
+				message.hidden = false;
+				tableWrap.hidden = true;
+				return;
+			}
+			if (data.type === 'resource') {
+				rows.replaceChildren(...data.rows.map(row => {
+					const tr = document.createElement('tr');
+					for (const [value, className] of [[row.name, 'name'], [row.status, 'status'], [row.detail, ''], [row.size, 'size']]) {
+						const td = document.createElement('td');
+						td.textContent = value;
+						td.title = value;
+						td.className = className;
+						tr.append(td);
+					}
+					tr.addEventListener('click', () => {
+						for (const candidate of rows.children) candidate.classList.toggle('selected', candidate === tr);
+						details.hidden = false;
+						detailsContent.textContent = 'Loading details...';
+						vscode.postMessage({ type: 'inspect', resource, id: row.id });
+					});
+					return tr;
+				}));
+				message.hidden = data.rows.length > 0;
+				message.className = 'message';
+				message.textContent = 'No resources found.';
+				tableWrap.hidden = data.rows.length === 0;
+				return;
+			}
+			if (data.type === 'details') detailsContent.textContent = JSON.stringify(data.details, null, 2);
+			if (data.type === 'detailsError') detailsContent.textContent = data.message;
+		});
+	</script>
+</body>
+</html>`;
+}
+
+function isResourceType(value: unknown): value is ResourceType {
+	return value === 'containers' || value === 'images' || value === 'volumes' || value === 'networks';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+	return isRecord(value) ? value : {};
+}
+
+function stringValue(value: Record<string, unknown>, ...keys: string[]): string {
+	for (const key of keys) {
+		const result = displayValue(value[key]);
+		if (result) {
+			return result;
+		}
+	}
+	return '';
+}
+
+function displayValue(value: unknown): string {
+	if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+		return String(value);
+	}
+	if (Array.isArray(value)) {
+		return value.map(displayValue).filter(Boolean).join(', ');
+	}
+	return '';
+}
+
+function numberValue(value: unknown): number | undefined {
+	return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function isExecError(error: unknown): error is Error & { stderr?: string } {
+	return error instanceof Error;
+}
+
+function shortId(id: string): string {
+	return id.replace(/^sha256:/, '').slice(0, 12);
+}
+
+function formatBytes(value: number | undefined): string {
+	if (!value) {
+		return '';
+	}
+	const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+	const unit = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+	return `${(value / (1024 ** unit)).toFixed(unit === 0 ? 0 : 1)} ${units[unit]}`;
+}
+
+function formatDate(timestamp: number): string {
+	return new Date(timestamp * 1000).toLocaleString();
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}

@@ -1,26 +1,35 @@
-export type ServerType = 'ssh' | 'mysql';
+export type ServerType = 'ssh' | 'mysql' | 'container';
 
 export interface BaseServer {
 	id: string;
 	type: ServerType;
 	name: string;
 	group: string;
+}
+
+export interface NetworkServer extends BaseServer {
 	host: string;
 	port: number;
 	username: string;
 }
 
-export interface SshServer extends BaseServer {
+export interface SshServer extends NetworkServer {
 	type: 'ssh';
 	authType: 'password' | 'privateKey';
 }
 
-export interface MysqlServer extends BaseServer {
+export interface MysqlServer extends NetworkServer {
 	type: 'mysql';
 	database: string;
 }
 
-export type Server = SshServer | MysqlServer;
+export interface ContainerServer extends BaseServer {
+	type: 'container';
+	runtime: 'docker' | 'podman' | 'apple';
+	executablePath: string;
+}
+
+export type Server = SshServer | MysqlServer | ContainerServer;
 
 export type ExportedServer = Server & {
 	password: string;
@@ -29,12 +38,12 @@ export type ExportedServer = Server & {
 };
 
 export interface ServerExportFile {
-	version: 3;
+	version: 5;
 	servers: ExportedServer[];
 }
 
 export interface ServerFormMessage {
-	type: 'save' | 'selectPrivateKey';
+	type: 'save' | 'selectPrivateKey' | 'selectExecutable';
 	name?: unknown;
 	group?: unknown;
 	host?: unknown;
@@ -45,6 +54,8 @@ export interface ServerFormMessage {
 	privateKey?: unknown;
 	passphrase?: unknown;
 	database?: unknown;
+	runtime?: unknown;
+	executablePath?: unknown;
 }
 
 export function parseServerForm(
@@ -54,6 +65,25 @@ export function parseServerForm(
 ): Server | undefined {
 	const name = normalizeString(message.name);
 	const group = normalizeString(message.group);
+	if (!name) {
+		return undefined;
+	}
+	if (serverType === 'container') {
+		const runtime = message.runtime === 'podman' ? 'podman' : message.runtime === 'apple' ? 'apple' : 'docker';
+		const executablePath = normalizeString(message.executablePath);
+		if (!executablePath) {
+			return undefined;
+		}
+		return {
+			id: serverId ?? crypto.randomUUID(),
+			type: 'container',
+			name,
+			group,
+			runtime,
+			executablePath,
+		};
+	}
+
 	const host = normalizeString(message.host);
 	const username = normalizeString(message.username);
 	const port = Number(message.port);
@@ -99,7 +129,7 @@ export function parseStoredServers(value: unknown): Server[] {
 }
 
 export function parseServerExport(value: unknown): ExportedServer[] {
-	if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3) || !Array.isArray(value.servers)) {
+	if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3 && value.version !== 4 && value.version !== 5) || !Array.isArray(value.servers)) {
 		throw new Error('The file is not a supported ServerHub export.');
 	}
 
@@ -141,7 +171,11 @@ function parseServer(value: unknown, requireType: boolean): Server {
 		throw new Error('Invalid server.');
 	}
 
-	const type = value.type === 'mysql' ? 'mysql' : value.type === 'ssh' || !requireType ? 'ssh' : undefined;
+	const type = value.type === 'mysql'
+		? 'mysql'
+		: value.type === 'container'
+			? 'container'
+			: value.type === 'ssh' || !requireType ? 'ssh' : undefined;
 	const id = normalizeString(value.id);
 	if (!type || !id) {
 		throw new Error('Invalid server.');
@@ -156,6 +190,8 @@ function parseServer(value: unknown, requireType: boolean): Server {
 		username: value.username,
 		authType: value.authType,
 		database: value.database,
+		runtime: value.runtime,
+		executablePath: value.executablePath,
 	}, type, id);
 	if (!server) {
 		throw new Error('Invalid server.');

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { configureContainerEditor } from '../containers/containerEditor';
 import { configureMysqlEditor, configureMysqlTablePreview } from '../mysql/mysqlEditor';
 import { MysqlServer, Server, ServerType } from '../servers/server';
 import { configureServerForm } from '../servers/serverForm';
@@ -36,6 +37,10 @@ export function registerServerHubEditor(
 			}
 
 			const server = findServer(serverStore, descriptor.serverId);
+			if (descriptor.kind === 'containerEditor' && server.type === 'container') {
+				configureContainerEditor(context.extensionUri, panel, server);
+				return;
+			}
 			if (descriptor.kind === 'sshTerminal' && server.type === 'ssh') {
 				const credentials = await serverStore.getCredentials(server.id);
 				if (server.authType === 'privateKey' ? !credentials.privateKey : !credentials.password) {
@@ -91,7 +96,7 @@ export function openServerForm(serverType: ServerType, server?: Server): Thenabl
 
 export function openServerConnection(server: Server): Thenable<unknown> {
 	return openEditor({
-		kind: server.type === 'ssh' ? 'sshTerminal' : 'mysqlEditor',
+		kind: server.type === 'ssh' ? 'sshTerminal' : server.type === 'mysql' ? 'mysqlEditor' : 'containerEditor',
 		serverId: server.id,
 	});
 }

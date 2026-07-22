@@ -5,11 +5,9 @@ import { ServerStore } from './serverStore';
 export class ServerTreeItem extends vscode.TreeItem {
 	constructor(readonly server: Server) {
 		super(server.name, vscode.TreeItemCollapsibleState.None);
-		this.description = server.type === 'mysql'
-			? `${server.username}@${server.host}:${server.port}/${server.database}`
-			: `${server.username}@${server.host}:${server.port}`;
+		this.description = serverDescription(server);
 		this.tooltip = `${server.name}\n${this.description}`;
-		this.iconPath = new vscode.ThemeIcon(server.type === 'mysql' ? 'database' : 'terminal-linux');
+		this.iconPath = new vscode.ThemeIcon(server.type === 'mysql' ? 'database' : server.type === 'container' ? 'server-process' : 'terminal-linux');
 		this.contextValue = `${server.type}Server`;
 	}
 }
@@ -83,19 +81,28 @@ export class ServerTreeDataProvider implements vscode.TreeDataProvider<ServerTre
 			return true;
 		}
 
-		return [
-			server.name,
-			server.group,
-			server.type,
-			server.host,
-			server.port.toString(),
-			server.username,
-			server.type === 'mysql' ? server.database : '',
-		].some(value => value.toLocaleLowerCase().includes(this.filter));
+		return serverSearchValues(server).some(value => value.toLocaleLowerCase().includes(this.filter));
 	}
 
 	dispose(): void {
 		this.storeSubscription.dispose();
 		this.changeEmitter.dispose();
+	}
+}
+
+function serverDescription(server: Server): string {
+	switch (server.type) {
+		case 'container': return `${server.runtime} · ${server.executablePath}`;
+		case 'mysql': return `${server.username}@${server.host}:${server.port}/${server.database}`;
+		case 'ssh': return `${server.username}@${server.host}:${server.port}`;
+	}
+}
+
+function serverSearchValues(server: Server): string[] {
+	const common = [server.name, server.group, server.type];
+	switch (server.type) {
+		case 'container': return [...common, server.runtime, server.executablePath];
+		case 'mysql': return [...common, server.host, server.port.toString(), server.username, server.database];
+		case 'ssh': return [...common, server.host, server.port.toString(), server.username];
 	}
 }

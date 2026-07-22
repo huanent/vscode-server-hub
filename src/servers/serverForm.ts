@@ -11,7 +11,7 @@ export async function configureServerForm(
 	existingServer?: Server,
 ): Promise<void> {
 	const isEditing = existingServer !== undefined;
-	const typeLabel = serverType === 'mysql' ? 'MySQL' : 'SSH';
+	const typeLabel = serverType === 'mysql' ? 'MySQL' : serverType === 'container' ? 'Container' : 'SSH';
 	panel.title = `${isEditing ? 'Edit' : 'Add'} ${typeLabel} Server`;
 	panel.webview.options = {
 		enableScripts: true,
@@ -30,6 +30,19 @@ export async function configureServerForm(
 		credentials,
 	);
 	panel.webview.onDidReceiveMessage(async (message: ServerFormMessage) => {
+		if (message.type === 'selectExecutable') {
+			const selection = await vscode.window.showOpenDialog({
+				canSelectMany: false,
+				canSelectFiles: true,
+				canSelectFolders: false,
+				openLabel: 'Select',
+				title: 'Select Container Executable',
+			});
+			if (selection?.[0]) {
+				void panel.webview.postMessage({ type: 'executableSelected', path: selection[0].fsPath });
+			}
+			return;
+		}
 		if (message.type === 'selectPrivateKey') {
 			const selection = await vscode.window.showOpenDialog({
 				canSelectMany: false,
@@ -68,8 +81,8 @@ export async function configureServerForm(
 		const authChanged = server?.type === 'ssh'
 			&& existingServer?.type === 'ssh'
 			&& server.authType !== existingServer.authType;
-		const requiresCredential = !isEditing || authChanged;
-		const hasCredential = server?.type === 'ssh' && server.authType === 'privateKey'
+		const requiresCredential = server?.type !== 'container' && (!isEditing || authChanged);
+		const hasCredential = server?.type === 'container' ? true : server?.type === 'ssh' && server.authType === 'privateKey'
 			? Boolean(credentials.privateKey)
 			: Boolean(credentials.password);
 		if (!server || (requiresCredential && !hasCredential)) {
@@ -93,7 +106,7 @@ function renderServerForm(
 	const nonce = createNonce();
 	const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(codiconsDistUri(extensionUri), 'codicon.css'));
 	const isEditing = server !== undefined;
-	const typeLabel = serverType === 'mysql' ? 'MySQL' : 'SSH';
+	const typeLabel = serverType === 'mysql' ? 'MySQL' : serverType === 'container' ? 'Container' : 'SSH';
 	const title = `${isEditing ? 'Edit' : 'Add'} ${typeLabel} Server`;
 	return `<!DOCTYPE html>
 <html lang="en">
@@ -166,7 +179,9 @@ function renderServerForm(
 		<main class="content">
 			<header class="heading">
 				<h1>${title}</h1>
-				<p>Configure the ${typeLabel} connection. Credentials remain encrypted on this device.</p>
+				<p>${serverType === 'container'
+					? 'Configure Docker, Podman, or Apple Container on this device.'
+					: `Configure the ${typeLabel} connection. Credentials remain encrypted on this device.`}</p>
 			</header>
 			<section class="section" aria-labelledby="connection-heading">
 				<h2 class="section-title" id="connection-heading">Connection details</h2>
@@ -186,6 +201,8 @@ function renderServerForm(
 		const passwordInput = form.elements.namedItem('password');
 		const privateKeyInput = form.elements.namedItem('privateKey');
 		const selectPrivateKeyButton = document.getElementById('select-private-key');
+		const selectExecutableButton = document.getElementById('select-executable');
+		const executablePathInput = form.elements.namedItem('executablePath');
 		const groupInput = form.elements.namedItem('group');
 		const groupOptions = document.getElementById('group-options');
 		const isEditing = ${JSON.stringify(isEditing)};
@@ -252,7 +269,15 @@ function renderServerForm(
 		}
 		for (const tab of document.querySelectorAll('.auth-tab')) {
 			tab.addEventListener('click', () => {
-				authType.value = tab.dataset.authType;
+				const field = tab.dataset.field === 'runtime' ? form.elements.namedItem('runtime') : authType;
+				const previousValue = field.value;
+				field.value = tab.dataset.value;
+				if (tab.dataset.field === 'runtime') {
+					const defaults = { docker: 'docker', podman: 'podman', apple: '/opt/homebrew/bin/container' };
+					if (!executablePathInput.value || executablePathInput.value === defaults[previousValue]) {
+						executablePathInput.value = defaults[field.value];
+					}
+				}
 				for (const candidate of document.querySelectorAll('.auth-tab')) {
 					candidate.setAttribute('aria-selected', String(candidate === tab));
 					candidate.tabIndex = candidate === tab ? 0 : -1;
@@ -274,6 +299,10 @@ function renderServerForm(
 		selectPrivateKeyButton?.addEventListener('click', () => {
 			error.textContent = '';
 			vscode.postMessage({ type: 'selectPrivateKey' });
+		});
+		selectExecutableButton?.addEventListener('click', () => {
+			error.textContent = '';
+			vscode.postMessage({ type: 'selectExecutable' });
 		});
 		const updateAuthFields = () => {
 			if (!authType) return;
@@ -299,6 +328,12 @@ function renderServerForm(
 			vscode.postMessage({ type: 'save', ...Object.fromEntries(new FormData(form)) });
 		});
 		window.addEventListener('message', event => {
+			if (event.data.type === 'executableSelected' && typeof event.data.path === 'string') {
+				executablePathInput.value = event.data.path;
+				updateSaveState();
+				executablePathInput.focus();
+				return;
+			}
 			if (event.data.type === 'privateKeySelected' && typeof event.data.contents === 'string') {
 				privateKeyInput.value = event.data.contents;
 				updateSaveState();
@@ -342,22 +377,43 @@ function renderServerFields(
 	isEditing: boolean,
 	credentials: ServerCredentials,
 ): string {
+	if (serverType === 'container') {
+		const runtime = server?.type === 'container' ? server.runtime : 'docker';
+		const executablePath = server?.type === 'container' ? server.executablePath : 'docker';
+		return `<div class="field">
+		<input name="runtime" type="hidden" value="${runtime}">
+		<div class="auth-tabs" role="tablist" aria-label="Container runtime">
+			<button class="auth-tab" type="button" role="tab" data-field="runtime" data-value="docker" aria-selected="${runtime === 'docker'}" tabindex="${runtime === 'docker' ? '0' : '-1'}">Docker</button>
+			<button class="auth-tab" type="button" role="tab" data-field="runtime" data-value="podman" aria-selected="${runtime === 'podman'}" tabindex="${runtime === 'podman' ? '0' : '-1'}">Podman</button>
+			<button class="auth-tab" type="button" role="tab" data-field="runtime" data-value="apple" aria-selected="${runtime === 'apple'}" tabindex="${runtime === 'apple' ? '0' : '-1'}">Apple</button>
+		</div>
+	</div>
+	<label class="field">
+		<span class="field-heading">
+			<span class="field-label">Executable <span class="required" aria-hidden="true">*</span></span>
+			<button id="select-executable" class="file-select" type="button"><span class="codicon codicon-folder-opened" aria-hidden="true"></span>Select file</button>
+		</span>
+		<input name="executablePath" autocomplete="off" required placeholder="docker" value="${escapeHtml(executablePath)}">
+	</label>`;
+	}
+
+	const networkServer = server?.type === 'container' ? undefined : server;
 	const defaultPort = serverType === 'mysql' ? 3306 : 22;
 	const database = server?.type === 'mysql' ? server.database : '';
 	const authType = server?.type === 'ssh' ? server.authType : 'password';
 	return `<div class="connection">
 		<label class="field">
 			<span class="field-label">Host <span class="required" aria-hidden="true">*</span></span>
-			<input name="host" autocomplete="off" required placeholder="server.example.com" value="${escapeHtml(server?.host ?? '')}">
+			<input name="host" autocomplete="off" required placeholder="server.example.com" value="${escapeHtml(networkServer?.host ?? '')}">
 		</label>
 		<label class="field">
 			<span class="field-label">Port <span class="required" aria-hidden="true">*</span></span>
-			<input name="port" type="number" min="1" max="65535" value="${server?.port ?? defaultPort}" required>
+			<input name="port" type="number" min="1" max="65535" value="${networkServer?.port ?? defaultPort}" required>
 		</label>
 	</div>
 	<label class="field">
 		<span class="field-label">Username <span class="required" aria-hidden="true">*</span></span>
-		<input name="username" autocomplete="username" required placeholder="root" value="${escapeHtml(server?.username ?? '')}">
+		<input name="username" autocomplete="username" required placeholder="root" value="${escapeHtml(networkServer?.username ?? '')}">
 	</label>
 	${serverType === 'mysql' ? `<label class="field">
 		<span class="field-label">Database <span class="required" aria-hidden="true">*</span></span>
@@ -365,8 +421,8 @@ function renderServerFields(
 	</label>` : `<div class="field">
 		<input name="authType" type="hidden" value="${authType}">
 		<div class="auth-tabs" role="tablist" aria-label="Authentication method">
-			<button class="auth-tab" type="button" role="tab" data-auth-type="password" aria-selected="${authType === 'password'}" tabindex="${authType === 'password' ? '0' : '-1'}">Password</button>
-			<button class="auth-tab" type="button" role="tab" data-auth-type="privateKey" aria-selected="${authType === 'privateKey'}" tabindex="${authType === 'privateKey' ? '0' : '-1'}">Private key</button>
+			<button class="auth-tab" type="button" role="tab" data-value="password" aria-selected="${authType === 'password'}" tabindex="${authType === 'password' ? '0' : '-1'}">Password</button>
+			<button class="auth-tab" type="button" role="tab" data-value="privateKey" aria-selected="${authType === 'privateKey'}" tabindex="${authType === 'privateKey' ? '0' : '-1'}">Private key</button>
 		</div>
 	</div>`}
 	<label class="field" id="password-field">
