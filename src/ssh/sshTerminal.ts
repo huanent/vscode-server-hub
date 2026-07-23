@@ -329,13 +329,20 @@ class SshWebviewSession {
 				await vscode.window.withProgress({
 					location: vscode.ProgressLocation.Notification,
 					title: `Downloading ${path.posix.basename(remotePath)}`,
-				}, progress => this.transferFile(
-					(progressStep, done) => sftp.fastGet(remotePath, destination.fsPath, { step: progressStep }, done),
+					cancellable: true,
+				}, (progress, token) => this.downloadSftpFile(
+					sftp,
+					remotePath,
+					destination.fsPath,
 					progress,
+					token,
 				));
 			}
 			void vscode.window.showInformationMessage(`Downloaded ${path.posix.basename(remotePath)}.`);
 		} catch (error) {
+			if (error instanceof vscode.CancellationError) {
+				return;
+			}
 			void vscode.window.showErrorMessage(`Could not download item: ${this.errorMessage(error)}`);
 		}
 	}
@@ -390,21 +397,67 @@ class SshWebviewSession {
 		await vscode.window.withProgress({
 			location: vscode.ProgressLocation.Notification,
 			title: `Downloading ${path.posix.basename(remotePath)}`,
-		}, async progress => {
+			cancellable: true,
+		}, async (progress, token) => {
 			let completedSize = 0;
 			for (const file of files) {
+				if (token.isCancellationRequested) {
+					throw new vscode.CancellationError();
+				}
 				const relativePath = path.posix.relative(remotePath, file.remotePath);
 				const localPath = path.join(localRoot, ...relativePath.split('/'));
 				await fs.mkdir(path.dirname(localPath), { recursive: true });
-				await this.transferFile(
-					(progressStep, done) => sftp.fastGet(file.remotePath, localPath, { step: progressStep }, done),
+				await this.downloadSftpFile(
+					sftp,
+					file.remotePath,
+					localPath,
 					progress,
+					token,
 					totalSize,
 					completedSize,
 				);
 				completedSize += file.size;
 			}
 		});
+	}
+
+	private async downloadSftpFile(
+		sftp: SFTPWrapper,
+		remotePath: string,
+		localPath: string,
+		progress: vscode.Progress<{ increment?: number; message?: string }>,
+		cancellationToken: vscode.CancellationToken,
+		totalSize?: number,
+		completedSize = 0,
+	): Promise<void> {
+		const temporaryPath = path.join(
+			path.dirname(localPath),
+			`.${path.basename(localPath)}.server-hub-download-${randomUUID()}.tmp`,
+		);
+		try {
+			await this.transferFile(
+				(progressStep, done) => sftp.fastGet(remotePath, temporaryPath, { step: progressStep }, done),
+				progress,
+				totalSize,
+				completedSize,
+				cancellationToken,
+			);
+			await this.replaceDownloadedFile(temporaryPath, localPath);
+		} finally {
+			await fs.rm(temporaryPath, { force: true });
+		}
+	}
+
+	private async replaceDownloadedFile(temporaryPath: string, localPath: string): Promise<void> {
+		try {
+			await fs.rename(temporaryPath, localPath);
+		} catch (error) {
+			if (!(error instanceof Error) || !('code' in error) || (error.code !== 'EEXIST' && error.code !== 'EPERM')) {
+				throw error;
+			}
+			await fs.rm(localPath, { force: true });
+			await fs.rename(temporaryPath, localPath);
+		}
 	}
 
 	private async collectSftpFiles(sftp: SFTPWrapper, remoteDirectory: string): Promise<Array<{ remotePath: string; size: number }>> {
@@ -572,16 +625,38 @@ class SshWebviewSession {
 		progress: vscode.Progress<{ increment?: number; message?: string }>,
 		totalSize?: number,
 		completedSize = 0,
+		cancellationToken?: vscode.CancellationToken,
 	): Promise<void> {
 		return new Promise((resolve, reject) => {
 			let lastReported = completedSize;
+			let cancelled = cancellationToken?.isCancellationRequested ?? false;
+			const cancellationSubscription = cancellationToken?.onCancellationRequested(() => {
+				cancelled = true;
+				const activeSftp = this.sftp;
+				this.sftp = undefined;
+				activeSftp?.end();
+			});
+			if (cancelled) {
+				cancellationSubscription?.dispose();
+				reject(new vscode.CancellationError());
+				return;
+			}
 			start((transferred, _chunkSize, fileSize) => {
 				const overallSize = totalSize ?? fileSize;
 				const current = completedSize + transferred;
 				const increment = overallSize > 0 ? ((current - lastReported) / overallSize) * 100 : 0;
 				lastReported = current;
 				progress.report({ increment });
-			}, error => error ? reject(error) : resolve());
+			}, error => {
+				cancellationSubscription?.dispose();
+				if (cancelled) {
+					reject(new vscode.CancellationError());
+				} else if (error) {
+					reject(error);
+				} else {
+					resolve();
+				}
+			});
 		});
 	}
 
