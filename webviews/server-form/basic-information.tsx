@@ -18,8 +18,7 @@ export function BasicInformation({ serverType, groups, values, setValue }: Basic
 				<TextInput autoFocus autoComplete="off" required placeholder="Production" value={values.name} onChange={event => setValue('name', event.target.value)} />
 			</Field>
 			<Field label="Group">
-				<TextInput autoComplete="off" list="server-groups" placeholder="No group" value={values.group} onChange={event => setValue('group', event.target.value)} />
-				<datalist id="server-groups">{groups.map(group => <option key={group} value={group} />)}</datalist>
+				<TextInput autoComplete="off" options={groups} placeholder="No group" value={values.group} onChange={event => setValue('group', event.target.value)} />
 			</Field>
 		</div>
 	</section>;
