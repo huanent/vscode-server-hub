@@ -1,4 +1,6 @@
-import { Field, FileButton, SegmentedControl, TextInput } from '../components/form-controls';
+import { FileButton } from '../components/button';
+import { Field, SegmentedControl } from '../components/form-controls';
+import { TextInput } from '../components/input';
 import type { FormFieldsProps, Runtime } from './types';
 
 const runtimeDefaults: Record<Runtime, string> = {

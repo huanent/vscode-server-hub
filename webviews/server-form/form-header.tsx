@@ -1,4 +1,4 @@
-import { PrimaryButton } from '../components/form-controls';
+import { PrimaryButton } from '../components/button';
 
 interface FormHeaderProps {
 	title: string;

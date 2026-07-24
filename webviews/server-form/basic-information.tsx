@@ -1,4 +1,5 @@
-import { Field, TextInput } from '../components/form-controls';
+import { Field } from '../components/form-controls';
+import { TextInput } from '../components/input';
 import type { FormFieldsProps, ServerType } from './types';
 
 interface BasicInformationProps extends FormFieldsProps {

@@ -1,4 +1,6 @@
-import { Field, FileButton, SecretInput, SegmentedControl, TextArea, TextInput } from '../components/form-controls';
+import { FileButton } from '../components/button';
+import { Field, SegmentedControl } from '../components/form-controls';
+import { SecretInput, TextArea, TextInput } from '../components/input';
 import type { Dispatch, SetStateAction } from 'react';
 import type { FormFieldsProps, ServerType } from './types';
 
