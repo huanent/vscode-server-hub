@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+@theme inline {
+	--color-foreground: var(--vscode-foreground);
+	--color-description-foreground: var(--vscode-descriptionForeground);
+	--color-disabled-foreground: var(--vscode-disabledForeground);
+	--color-error-foreground: var(--vscode-errorForeground);
+	--color-focus-border: var(--vscode-focusBorder);
+	--color-panel-border: var(--vscode-panel-border);
+	--color-editor-background: var(--vscode-editor-background);
+	--color-editor-widget-background: var(--vscode-editorWidget-background);
+	--color-input-background: var(--vscode-input-background);
+	--color-input-foreground: var(--vscode-input-foreground);
+	--color-input-border: var(--vscode-input-border, transparent);
+	--color-dropdown-border: var(--vscode-dropdown-border, var(--vscode-input-border, transparent));
+	--color-toolbar-hover-background: var(--vscode-toolbar-hoverBackground);
+	--color-button-background: var(--vscode-button-background);
+	--color-button-foreground: var(--vscode-button-foreground);
+	--color-button-hover-background: var(--vscode-button-hoverBackground);
+	--color-button-secondary-background: var(--vscode-button-secondaryBackground);
+	--font-vscode: var(--vscode-font-family);
+	--font-editor: var(--vscode-editor-font-family);
+	--shadow-focus-border: 0 0 0 1px var(--vscode-focusBorder);
+}
