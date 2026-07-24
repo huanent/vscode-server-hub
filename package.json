@@ -199,8 +199,9 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run prepare:webview && npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "compile": "npm run build:webview && tsc -p ./ && tsc -p webviews",
+    "watch": "concurrently -k \"tsc -watch -p ./\" \"tsc -watch -p webviews\" \"vite build --watch\"",
+    "build:webview": "vite build",
     "prepare:webview": "mkdir -p resources/xterm resources/codicons && cp node_modules/@xterm/xterm/css/xterm.css node_modules/@xterm/xterm/lib/xterm.js node_modules/@xterm/addon-fit/lib/addon-fit.js resources/xterm/ && cp node_modules/@vscode/codicons/dist/codicon.css node_modules/@vscode/codicons/dist/codicon.ttf resources/codicons/",
     "pretest": "npm run compile",
     "test": "vscode-test",
@@ -209,16 +210,23 @@
     "pack": "vsce pack"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
     "@types/mocha": "^10.0.10",
     "@types/node": "24.x",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
     "@types/ssh2": "^1.15.5",
     "@types/vscode": "^1.125.0",
+    "@vitejs/plugin-react": "^4.7.0",
     "@vscode/codicons": "^0.0.45",
     "@vscode/test-cli": "^0.0.15",
     "@vscode/test-electron": "^3.0.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "typescript": "^7.0.2"
+    "concurrently": "^9.2.0",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^7.0.6"
   },
   "overrides": {
     "diff": "^8.0.4",
@@ -226,6 +234,8 @@
   },
   "dependencies": {
     "mysql2": "^3.23.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
     "ssh2": "^1.17.0"
   }
 }

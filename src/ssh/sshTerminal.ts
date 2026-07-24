@@ -9,7 +9,7 @@ import { Client, ClientChannel, FileEntryWithStats, SFTPWrapper } from 'ssh2';
 import { RemoteMetricsFormatter, RemoteMetricsReader } from './remoteMetrics';
 import { SshServer } from '../servers/server';
 import { ServerCredentials } from '../servers/serverStore';
-import { codiconsDistUri, createNonce, escapeHtml } from '../webview/webviewUtils';
+import { codiconsDistUri, createNonce, escapeHtml } from '../utils';
 
 interface SshWebviewMessage {
 	type: 'input' | 'resize' | 'ready' | 'sftpList' | 'sftpDelete' | 'sftpDownload' | 'sftpUpload' | 'sftpCopyPath' | 'sftpCreateDirectory' | 'sftpProperties' | 'sftpEdit';

@@ -25,3 +25,13 @@ ServerHub keeps SSH and MySQL connections close to your VS Code workspace.
 7. Right-click a server to edit or delete it.
 
 Use the import and export buttons in the Server List title to move connections between devices. Export files contain passwords, private keys, and key passphrases in plain text, so keep them secure and delete them when they are no longer needed.
+
+## Development
+
+The extension host code lives in `src` and is compiled with TypeScript. React webviews live in `webviews` and are bundled by Vite into `resources/webview`.
+
+- `npm run compile` builds the React webviews and extension host code.
+- `npm run watch` watches both build pipelines.
+- `npm run build:webview` builds only the Vite webviews.
+
+The server form is the first React webview. Other editors can migrate incrementally by adding another Vite entry in `vite.config.mjs` and loading its generated assets through a VS Code webview URI.

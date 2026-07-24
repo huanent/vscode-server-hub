@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { FieldPacket, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { ServerStore } from '../servers/serverStore';
-import { escapeHtml } from '../webview/webviewUtils';
+import { escapeHtml } from '../utils';
 import { createMysqlConnection } from './mysqlConnection';
 import { displayMysqlValue } from './tableData';
 import { splitMysqlStatements } from './sqlStatements';

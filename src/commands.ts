@@ -1,10 +1,10 @@
 import * as vscode from 'vscode';
-import { openServerConnection, openServerForm } from '../editors/serverHubEditor';
-import { Server, ServerType } from '../servers/server';
-import { ServerStore } from '../servers/serverStore';
-import { exportServer, exportServers, importServers } from '../servers/serverTransfer';
-import { ServerGroupTreeItem, ServerTreeDataProvider, ServerTreeItem } from '../servers/serverTree';
-import { toggleSftpForActiveTerminal } from '../ssh/sshTerminal';
+import { openServerConnection, openServerForm } from './editors/serverHubEditor';
+import { Server, ServerType } from './servers/server';
+import { ServerStore } from './servers/serverStore';
+import { exportServer, exportServers, importServers } from './servers/serverTransfer';
+import { ServerGroupTreeItem, ServerTreeDataProvider, ServerTreeItem } from './servers/serverTree';
+import { toggleSftpForActiveTerminal } from './ssh/sshTerminal';
 
 const commandIds = {
 	addServer: 'server-hub.addServer',
