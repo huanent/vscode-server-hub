@@ -18,7 +18,7 @@ import {
 	parseTableSort,
 } from './tableData';
 import { MysqlServer } from '../servers/server';
-import { codiconsDistUri, createNonce, escapeHtml } from '../webview/webviewUtils';
+import { codiconsDistUri, createNonce, escapeHtml } from '../utils';
 import { exportMysqlDatabase, importMysqlDatabase } from './mysqlDatabaseTransfer';
 
 export function configureMysqlEditor(

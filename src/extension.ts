@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { registerServerCommands } from './commands/registerServerCommands';
+import { registerServerCommands } from './commands';
 import { registerServerHubEditor } from './editors/serverHubEditor';
 import { MysqlSqlEditorController } from './mysql/mysqlSqlEditor';
 import { ServerStore } from './servers/serverStore';

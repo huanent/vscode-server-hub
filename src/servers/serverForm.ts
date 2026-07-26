@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { normalizePassword, parseServerForm, Server, ServerFormMessage, ServerType } from './server';
 import { ServerCredentials, ServerStore } from './serverStore';
-import { codiconsDistUri, createNonce, escapeHtml } from '../webview/webviewUtils';
+import { codiconsDistUri, createNonce, escapeHtml } from '../utils';
 
 export async function configureServerForm(
 	context: vscode.ExtensionContext,

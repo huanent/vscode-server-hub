@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
 import { ContainerServer } from '../servers/server';
-import { codiconsDistUri, createNonce, escapeHtml } from '../webview/webviewUtils';
+import { codiconsDistUri, createNonce, escapeHtml } from '../utils';
 
 const execFileAsync = promisify(execFile);
 
