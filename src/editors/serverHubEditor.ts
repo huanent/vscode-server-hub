@@ -46,7 +46,7 @@ export function registerServerHubEditor(
 				if (server.authType === 'privateKey' ? !credentials.privateKey : !credentials.password) {
 					throw new Error(`No ${server.authType === 'privateKey' ? 'private key' : 'password'} is available for “${server.name}” on this device.`);
 				}
-				configureSshTerminal(context.extensionUri, panel, server, credentials);
+				configureSshTerminal(context, panel, server, credentials);
 				return;
 			}
 			const password = await serverStore.getPassword(server.id);

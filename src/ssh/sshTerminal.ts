@@ -6,13 +6,13 @@ import * as os from 'os';
 import * as path from 'path';
 import { Duplex } from 'stream';
 import { Client, ClientChannel, FileEntryWithStats, SFTPWrapper } from 'ssh2';
-import { RemoteMetricsFormatter, RemoteMetricsReader } from './remoteMetrics';
+import { formatByteRate, RemoteMetricsFormatter, RemoteMetricsReader } from './remoteMetrics';
 import { SshServer } from '../servers/server';
 import { ServerCredentials } from '../servers/serverStore';
 import { codiconsDistUri, createNonce, escapeHtml } from '../utils';
 
 interface SshWebviewMessage {
-	type: 'input' | 'resize' | 'ready' | 'sftpList' | 'sftpDelete' | 'sftpDownload' | 'sftpUpload' | 'sftpCopyPath' | 'sftpCreateDirectory' | 'sftpProperties' | 'sftpEdit';
+	type: 'input' | 'resize' | 'ready' | 'sftpList' | 'sftpDelete' | 'sftpDownload' | 'sftpUpload' | 'sftpCopyPath' | 'sftpCreateDirectory' | 'sftpProperties' | 'sftpEdit' | 'sftpToggleFavorite';
 	data?: unknown;
 	rows?: unknown;
 	columns?: unknown;
@@ -21,6 +21,7 @@ interface SshWebviewMessage {
 }
 
 const metricsRefreshIntervalMs = 5000;
+const sftpFavoritesStateKey = 'server-hub.sftpFavorites';
 const sftpEditTempRoot = path.join(os.tmpdir(), 'server-hub-sftp-edit');
 const sftpEditFiles = new Map<string, {
 	remotePath: string;
@@ -56,11 +57,12 @@ export function toggleSftpForActiveTerminal(): void {
 }
 
 export function configureSshTerminal(
-	extensionUri: vscode.Uri,
+	context: vscode.ExtensionContext,
 	panel: vscode.WebviewPanel,
 	server: SshServer,
 	credentials: ServerCredentials,
 ): void {
+	const extensionUri = context.extensionUri;
 	const resourcesRoot = vscode.Uri.joinPath(extensionUri, 'resources');
 	const xtermRoot = vscode.Uri.joinPath(resourcesRoot, 'xterm');
 	panel.title = server.name;
@@ -71,7 +73,7 @@ export function configureSshTerminal(
 	panel.iconPath = new vscode.ThemeIcon('terminal');
 	panel.webview.html = renderSshTerminal(panel.webview, extensionUri, xtermRoot, server);
 
-	const session = new SshWebviewSession(panel, server, credentials);
+	const session = new SshWebviewSession(context.globalState, panel, server, credentials);
 	activeSshSession = session;
 	panel.onDidChangeViewState(event => {
 		if (event.webviewPanel.active) {
@@ -105,6 +107,7 @@ class SshWebviewSession {
 	private sftpPath = '.';
 
 	constructor(
+		private readonly globalState: vscode.Memento,
 		private readonly panel: vscode.WebviewPanel,
 		private readonly server: SshServer,
 		private readonly credentials: ServerCredentials,
@@ -113,6 +116,7 @@ class SshWebviewSession {
 	handleMessage(message: SshWebviewMessage): void {
 		if (message.type === 'ready' && !this.webviewReady) {
 			this.webviewReady = true;
+			this.postSftpFavorites();
 			if (this.sftpVisible) {
 				this.postMessage({ type: 'showSftp' });
 			}
@@ -161,6 +165,10 @@ class SshWebviewSession {
 		}
 		if (message.type === 'sftpEdit' && typeof message.path === 'string') {
 			void this.editSftpFile(message.path);
+			return;
+		}
+		if (message.type === 'sftpToggleFavorite' && typeof message.path === 'string') {
+			void this.toggleSftpFavorite(message.path);
 			return;
 		}
 		if (
@@ -629,6 +637,9 @@ class SshWebviewSession {
 	): Promise<void> {
 		return new Promise((resolve, reject) => {
 			let lastReported = completedSize;
+			let speedSampleStartedAt = Date.now();
+			let speedSampleBytes = 0;
+			let speedMessage: string | undefined;
 			let cancelled = cancellationToken?.isCancellationRequested ?? false;
 			const cancellationSubscription = cancellationToken?.onCancellationRequested(() => {
 				cancelled = true;
@@ -641,12 +652,22 @@ class SshWebviewSession {
 				reject(new vscode.CancellationError());
 				return;
 			}
-			start((transferred, _chunkSize, fileSize) => {
+			start((transferred, chunkSize, fileSize) => {
 				const overallSize = totalSize ?? fileSize;
 				const current = completedSize + transferred;
 				const increment = overallSize > 0 ? ((current - lastReported) / overallSize) * 100 : 0;
+				const now = Date.now();
+				const elapsedMilliseconds = now - speedSampleStartedAt;
+				speedSampleBytes += chunkSize;
+				if (elapsedMilliseconds >= 500 || transferred >= fileSize) {
+					if (elapsedMilliseconds > 0) {
+						speedMessage = formatByteRate(speedSampleBytes * 1000 / elapsedMilliseconds);
+					}
+					speedSampleStartedAt = now;
+					speedSampleBytes = 0;
+				}
 				lastReported = current;
-				progress.report({ increment });
+				progress.report({ increment, message: speedMessage });
 			}, error => {
 				cancellationSubscription?.dispose();
 				if (cancelled) {
@@ -657,6 +678,26 @@ class SshWebviewSession {
 					resolve();
 				}
 			});
+		});
+	}
+
+	private async toggleSftpFavorite(remotePath: string): Promise<void> {
+		const favoritesByServer = this.globalState.get<Record<string, string[]>>(sftpFavoritesStateKey, {});
+		const favorites = favoritesByServer[this.server.id] ?? [];
+		const updatedFavorites = favorites.includes(remotePath)
+			? favorites.filter(favorite => favorite !== remotePath)
+			: [...favorites, remotePath].sort((left, right) => left.localeCompare(right));
+		await this.globalState.update(sftpFavoritesStateKey, {
+			...favoritesByServer,
+			[this.server.id]: updatedFavorites,
+		});
+		this.postSftpFavorites(updatedFavorites);
+	}
+
+	private postSftpFavorites(favorites?: string[]): void {
+		this.postMessage({
+			type: 'sftpFavorites',
+			favorites: favorites ?? this.globalState.get<Record<string, string[]>>(sftpFavoritesStateKey, {})[this.server.id] ?? [],
 		});
 	}
 
@@ -793,9 +834,16 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		.icon-button { display: inline-grid; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 4px; place-items: center; color: var(--vscode-icon-foreground); background: transparent; cursor: pointer; }
 		.icon-button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
 		.icon-button:disabled { opacity: 0.4; cursor: default; }
-		.sftp-path { width: 100%; min-width: 0; height: 26px; padding: 2px 6px; border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px; outline: none; color: var(--vscode-input-foreground); background: var(--vscode-input-background); font-family: var(--vscode-editor-font-family); font-size: 12px; }
+		.sftp-path-control { position: relative; min-width: 0; }
+		.sftp-path { width: 100%; min-width: 0; height: 26px; padding: 2px 30px 2px 6px; border: 1px solid var(--vscode-input-border, transparent); border-radius: 2px; outline: none; color: var(--vscode-input-foreground); background: var(--vscode-input-background); font-family: var(--vscode-editor-font-family); font-size: 12px; }
 		.sftp-path:focus { border-color: var(--vscode-focusBorder); }
 		.sftp-path:disabled { opacity: 0.6; cursor: default; }
+		.sftp-favorite-button { position: absolute; top: 1px; right: 1px; width: 24px; height: 24px; border-radius: 2px; }
+		.sftp-favorite-button.active { color: var(--vscode-charts-yellow); }
+		.sftp-favorites { position: absolute; top: 28px; right: 0; left: 0; z-index: 12; max-height: 210px; padding: 4px; overflow: auto; border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border)); border-radius: 3px; color: var(--vscode-dropdown-foreground); background: var(--vscode-dropdown-background); box-shadow: 0 2px 8px var(--vscode-widget-shadow); }
+		.sftp-favorites[hidden] { display: none; }
+		.sftp-favorites button { display: block; width: 100%; min-height: 26px; padding: 3px 7px; overflow: hidden; border: 0; border-radius: 2px; color: inherit; background: transparent; font-family: var(--vscode-editor-font-family); font-size: 12px; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+		.sftp-favorites button:hover, .sftp-favorites button:focus { outline: none; color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
 		.sftp-header, .sftp-entry { display: grid; grid-template-columns: minmax(140px, 1fr) 86px 130px; align-items: center; }
 		.sftp-header { padding: 0 12px; border-bottom: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); font-size: 11px; }
 		.sftp-header span:not(:first-child), .sftp-meta { text-align: right; }
@@ -855,7 +903,11 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		<aside class="sftp-panel" aria-label="SFTP file browser">
 			<header class="sftp-toolbar">
 				<button id="sftpUpButton" class="icon-button" type="button" title="Parent directory" aria-label="Parent directory"><i class="codicon codicon-arrow-up"></i></button>
-				<input id="sftpPath" class="sftp-path" type="text" aria-label="Remote path" spellcheck="false">
+				<div class="sftp-path-control">
+					<input id="sftpPath" class="sftp-path" type="text" aria-label="Remote path" spellcheck="false" autocomplete="off" aria-haspopup="listbox" aria-expanded="false">
+					<button id="sftpFavoriteButton" class="icon-button sftp-favorite-button" type="button" title="Add to favorites" aria-label="Add to favorites"><i class="codicon codicon-star-empty"></i></button>
+					<div id="sftpFavorites" class="sftp-favorites" role="listbox" aria-label="Favorite remote paths" hidden></div>
+				</div>
 				<button id="sftpRefreshButton" class="icon-button" type="button" title="Refresh" aria-label="Refresh"><i class="codicon codicon-refresh"></i></button>
 				<div class="sftp-toolbar-actions">
 					<button id="sftpMoreButton" class="icon-button" type="button" title="More actions" aria-label="More actions" aria-haspopup="menu" aria-expanded="false"><i class="codicon codicon-ellipsis"></i></button>
@@ -884,6 +936,8 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		const statusTitle = document.getElementById('statusTitle');
 		const statusDetail = document.getElementById('statusDetail');
 		const sftpPath = document.getElementById('sftpPath');
+		const sftpFavoriteButton = document.getElementById('sftpFavoriteButton');
+		const sftpFavorites = document.getElementById('sftpFavorites');
 		const sftpList = document.getElementById('sftpList');
 		const sftpStatus = document.getElementById('sftpStatus');
 		const sftpUpButton = document.getElementById('sftpUpButton');
@@ -896,6 +950,7 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		const sftpContextMenu = document.getElementById('sftpContextMenu');
 		let currentSftpPath = '.';
 		let parentSftpPath = null;
+		let favoriteSftpPaths = [];
 		const metrics = {
 			cpu: document.getElementById('cpuMetric'),
 			memory: document.getElementById('memoryMetric'),
@@ -936,6 +991,11 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 				showSftpStatus('Loading ' + message.path + '...', true);
 			}
 			if (message.type === 'sftpEntries') renderSftpEntries(message);
+			if (message.type === 'sftpFavorites') {
+				favoriteSftpPaths = message.favorites;
+				renderSftpFavorites();
+				updateSftpFavoriteButton();
+			}
 			if (message.type === 'sftpError') {
 				sftpPath.disabled = false;
 				sftpStatus.hidden = true;
@@ -943,6 +1003,10 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 		});
 		sftpUpButton.addEventListener('click', () => { if (parentSftpPath) loadSftp(parentSftpPath); });
 		sftpRefreshButton.addEventListener('click', () => loadSftp(currentSftpPath));
+		sftpFavoriteButton.addEventListener('click', event => {
+			event.stopPropagation();
+			vscode.postMessage({ type: 'sftpToggleFavorite', path: currentSftpPath });
+		});
 		sftpMoreButton.addEventListener('click', event => {
 			event.stopPropagation();
 			const visible = sftpToolbarMenu.hidden;
@@ -975,13 +1039,16 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 				sftpPath.blur();
 			}
 		});
+		sftpPath.addEventListener('focus', showSftpFavorites);
+		sftpPath.addEventListener('click', event => event.stopPropagation());
 		window.addEventListener('focus', () => terminal.focus());
 		window.addEventListener('resize', fitTerminal);
-		document.addEventListener('click', () => { hideSftpContextMenu(); hideSftpToolbarMenu(); });
+		document.addEventListener('click', () => { hideSftpContextMenu(); hideSftpToolbarMenu(); hideSftpFavorites(); });
 		document.addEventListener('keydown', event => {
 			if (event.key === 'Escape') {
 				hideSftpContextMenu();
 				hideSftpToolbarMenu();
+				hideSftpFavorites();
 			}
 		});
 
@@ -1020,10 +1087,49 @@ function renderSshTerminal(webview: vscode.Webview, extensionUri: vscode.Uri, xt
 			sftpPath.disabled = false;
 			sftpPath.value = currentSftpPath;
 			sftpPath.title = currentSftpPath;
+			updateSftpFavoriteButton();
 			sftpUpButton.disabled = !parentSftpPath;
 			sftpList.replaceChildren(...message.entries.map(createSftpEntry));
 			sftpStatus.hidden = message.entries.length !== 0;
 			if (message.entries.length === 0) showSftpStatus('This directory is empty.');
+		}
+
+		function renderSftpFavorites() {
+			sftpFavorites.replaceChildren(...favoriteSftpPaths.map(favorite => {
+				const button = document.createElement('button');
+				button.type = 'button';
+				button.setAttribute('role', 'option');
+				button.textContent = favorite;
+				button.title = favorite;
+				button.addEventListener('mousedown', event => event.preventDefault());
+				button.addEventListener('click', event => {
+					event.stopPropagation();
+					hideSftpFavorites();
+					loadSftp(favorite);
+				});
+				return button;
+			}));
+			if (document.activeElement === sftpPath) showSftpFavorites();
+		}
+
+		function showSftpFavorites() {
+			const hasFavorites = sftpFavorites.childElementCount > 0;
+			sftpFavorites.hidden = !hasFavorites;
+			sftpPath.setAttribute('aria-expanded', String(hasFavorites));
+		}
+
+		function hideSftpFavorites() {
+			sftpFavorites.hidden = true;
+			sftpPath.setAttribute('aria-expanded', 'false');
+		}
+
+		function updateSftpFavoriteButton() {
+			const favorite = favoriteSftpPaths.includes(currentSftpPath);
+			sftpFavoriteButton.classList.toggle('active', favorite);
+			sftpFavoriteButton.title = favorite ? 'Remove from favorites' : 'Add to favorites';
+			sftpFavoriteButton.setAttribute('aria-label', sftpFavoriteButton.title);
+			const icon = sftpFavoriteButton.querySelector('.codicon');
+			icon.className = 'codicon codicon-' + (favorite ? 'star-full' : 'star-empty');
 		}
 
 		function createSftpEntry(entry) {

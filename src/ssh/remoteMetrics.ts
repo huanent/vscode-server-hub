@@ -217,7 +217,7 @@ function formatMegabytes(value: number): string {
 	return value >= 1024 ? `${(value / 1024).toFixed(1)}GB` : `${Math.round(value)}MB`;
 }
 
-function formatByteRate(bytesPerSecond: number): string {
+export function formatByteRate(bytesPerSecond: number): string {
 	if (!Number.isFinite(bytesPerSecond) || bytesPerSecond < 0) {
 		return '--';
 	}
