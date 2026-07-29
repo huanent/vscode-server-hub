@@ -876,7 +876,7 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 		const createTableError = document.getElementById('createTableError');
 		const cancelCreateTable = document.getElementById('cancelCreateTable');
 		const saveCreateTable = document.getElementById('saveCreateTable');
-		const columnTypes = ['BIGINT', 'INT', 'SMALLINT', 'TINYINT', 'DECIMAL', 'VARCHAR', 'CHAR', 'TEXT', 'LONGTEXT', 'BOOLEAN', 'DATE', 'DATETIME', 'TIMESTAMP', 'TIME', 'JSON', 'BLOB'];
+		const columnTypes = ['BIGINT', 'INT', 'SMALLINT', 'TINYINT', 'BIT', 'DECIMAL', 'VARCHAR', 'CHAR', 'TEXT', 'LONGTEXT', 'BOOLEAN', 'DATE', 'DATETIME', 'TIMESTAMP', 'TIME', 'JSON', 'BLOB'];
 		let createTableConfirmationId;
 		let editingTable;
 
@@ -1020,9 +1020,10 @@ function renderMysqlOverview(webview: vscode.Webview, extensionUri: vscode.Uri, 
 			const primaryInput = primary.querySelector('input');
 			const autoIncrementInput = autoIncrement.querySelector('input');
 			const updateColumnState = () => {
-				const supportsLength = ['DECIMAL', 'VARCHAR', 'CHAR'].includes(type.value);
+				const supportsLength = ['BIT', 'DECIMAL', 'VARCHAR', 'CHAR'].includes(type.value);
 				length.disabled = !supportsLength;
 				length.required = type.value === 'VARCHAR' || type.value === 'CHAR';
+				length.pattern = type.value === 'BIT' ? '[0-9]+' : '[0-9]+(,[0-9]+)?';
 				if (!supportsLength) length.value = '';
 				if (primaryInput.checked) nullableInput.checked = false;
 				if (autoIncrementInput.checked) {
@@ -1748,11 +1749,11 @@ interface MysqlCreateTableDefinition {
 }
 
 const createTableColumnTypes = new Set([
-	'BIGINT', 'INT', 'SMALLINT', 'TINYINT', 'DECIMAL', 'VARCHAR', 'CHAR', 'TEXT', 'LONGTEXT',
+	'BIGINT', 'INT', 'SMALLINT', 'TINYINT', 'BIT', 'DECIMAL', 'VARCHAR', 'CHAR', 'TEXT', 'LONGTEXT',
 	'BOOLEAN', 'DATE', 'DATETIME', 'TIMESTAMP', 'TIME', 'JSON', 'BLOB',
 ]);
 const integerColumnTypes = new Set(['BIGINT', 'INT', 'SMALLINT', 'TINYINT']);
-const lengthColumnTypes = new Set(['DECIMAL', 'VARCHAR', 'CHAR']);
+const lengthColumnTypes = new Set(['BIT', 'DECIMAL', 'VARCHAR', 'CHAR']);
 const currentTimestampColumnTypes = new Set(['DATETIME', 'TIMESTAMP']);
 
 function parseCreateTableDefinition(
@@ -1803,6 +1804,9 @@ function parseCreateTableDefinition(
 		const length = typeof input.length === 'string' ? input.length.trim() : '';
 		if (length && (!lengthColumnTypes.has(type) || !/^\d+(?:,\d+)?$/.test(length))) {
 			throw new Error(`Column “${columnName}” has an invalid length.`);
+		}
+		if (type === 'BIT' && length && (!/^\d+$/.test(length) || Number(length) < 1 || Number(length) > 64)) {
+			throw new Error(`Column “${columnName}” must have a bit length from 1 to 64.`);
 		}
 		if ((type === 'VARCHAR' || type === 'CHAR') && !length) {
 			throw new Error(`Column “${columnName}” requires a length.`);
@@ -1883,6 +1887,8 @@ async function readTableDefinition(
 		let length = '';
 		if ((type === 'VARCHAR' || type === 'CHAR') && row.characterLength !== null) {
 			length = String(row.characterLength);
+		} else if (type === 'BIT' && row.numericPrecision !== null) {
+			length = String(row.numericPrecision);
 		} else if (type === 'DECIMAL' && row.numericPrecision !== null) {
 			length = `${String(row.numericPrecision)},${String(row.numericScale ?? 0)}`;
 		}
