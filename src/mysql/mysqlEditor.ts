@@ -392,21 +392,35 @@ export function configureMysqlTablePreview(
 	let primaryKeyColumns: string[] = [];
 	let pageRows = new Map<string, RowDataPacket>();
 	let currentRequest = { page: 1, pageSize: 100, sort: undefined as MysqlTableSort | undefined, filters: [] as MysqlTableFilter[] };
+	let pendingRowUpdate: { id: string; query: string; parameters: unknown[] } | undefined;
+	let pendingRowInsert: { id: string; query: string; parameters: unknown[] } | undefined;
 	panel.onDidDispose(() => {
 		disposed = true;
 		void connection?.end();
 	});
 	panel.webview.onDidReceiveMessage(async (message: MysqlTablePreviewMessage) => {
-		if (message.type === 'updateRow') {
-			await updateRow(message.rowId, message.values);
+		if (message.type === 'previewUpdateRow') {
+			previewUpdateRow(message.rowId, message.values);
+			return;
+		}
+		if (message.type === 'confirmRowUpdate') {
+			await confirmRowUpdate(message.confirmationId);
 			return;
 		}
 		if (message.type === 'deleteRow') {
 			await deleteRow(message.rowId);
 			return;
 		}
-		if (message.type === 'insertRow') {
-			await insertRow(message.values);
+		if (message.type === 'previewInsertRow') {
+			previewInsertRow(message.values);
+			return;
+		}
+		if (message.type === 'confirmRowInsert') {
+			await confirmRowInsert(message.confirmationId);
+			return;
+		}
+		if (message.type === 'refresh') {
+			await loadPage(currentRequest.page, currentRequest.pageSize, currentRequest.sort, currentRequest.filters);
 			return;
 		}
 		if (
@@ -470,6 +484,8 @@ export function configureMysqlTablePreview(
 		if (!connection) {
 			return;
 		}
+		pendingRowUpdate = undefined;
+		pendingRowInsert = undefined;
 		currentRequest = { page, pageSize, sort, filters };
 		void panel.webview.postMessage({ type: 'tableLoading' });
 		try {
@@ -517,7 +533,7 @@ export function configureMysqlTablePreview(
 		}
 	}
 
-	async function updateRow(rowIdValue: unknown, valuesValue: unknown): Promise<void> {
+	function previewUpdateRow(rowIdValue: unknown, valuesValue: unknown): void {
 		if (!connection || typeof rowIdValue !== 'string' || primaryKeyColumns.length === 0) {
 			return;
 		}
@@ -529,19 +545,38 @@ export function configureMysqlTablePreview(
 		try {
 			const setClause = changes.map(() => '?? = ?').join(', ');
 			const whereClause = primaryKeyColumns.map(() => '?? <=> ?').join(' AND ');
+			const query = `UPDATE ??.?? SET ${setClause} WHERE ${whereClause} LIMIT 1`;
 			const parameters = [
 				database,
 				table,
 				...changes.flatMap(change => [change.column, change.value]),
 				...primaryKeyColumns.flatMap(column => [column, originalRow[column]]),
 			];
-			const [result] = await connection.query<ResultSetHeader>(
-				`UPDATE ??.?? SET ${setClause} WHERE ${whereClause} LIMIT 1`,
-				parameters,
-			);
+			pendingRowUpdate = { id: crypto.randomUUID(), query, parameters };
+			void panel.webview.postMessage({
+				type: 'rowUpdatePreview',
+				confirmationId: pendingRowUpdate.id,
+				sql: `${connection.format(query, parameters)};`,
+			});
+		} catch (error) {
+			pendingRowUpdate = undefined;
+			void panel.webview.postMessage({ type: 'rowUpdateError', message: errorMessage(error) });
+		}
+	}
+
+	async function confirmRowUpdate(confirmationIdValue: unknown): Promise<void> {
+		if (!connection || typeof confirmationIdValue !== 'string'
+			|| !pendingRowUpdate || pendingRowUpdate.id !== confirmationIdValue) {
+			void panel.webview.postMessage({ type: 'rowUpdateError', message: 'The SQL preview has expired. Review the changes again.' });
+			return;
+		}
+		const { query, parameters } = pendingRowUpdate;
+		try {
+			const [result] = await connection.query<ResultSetHeader>(query, parameters);
 			if (result.affectedRows !== 1) {
 				throw new Error('The row was not updated. It may have been changed or deleted.');
 			}
+			pendingRowUpdate = undefined;
 			void panel.webview.postMessage({ type: 'rowUpdated' });
 			await loadPage(currentRequest.page, currentRequest.pageSize, currentRequest.sort, currentRequest.filters);
 		} catch (error) {
@@ -585,7 +620,7 @@ export function configureMysqlTablePreview(
 		}
 	}
 
-	async function insertRow(valuesValue: unknown): Promise<void> {
+	function previewInsertRow(valuesValue: unknown): void {
 		if (!connection || !valuesValue || typeof valuesValue !== 'object' || Array.isArray(valuesValue)) {
 			return;
 		}
@@ -594,16 +629,39 @@ export function configureMysqlTablePreview(
 			.map(column => column.name));
 		const values = parseRowChanges(valuesValue, insertableColumnNames, columnInfo);
 		try {
+			let query: string;
+			let parameters: unknown[];
 			if (values.length === 0) {
-				await connection.query('INSERT INTO ??.?? () VALUES ()', [database, table]);
+				query = 'INSERT INTO ??.?? () VALUES ()';
+				parameters = [database, table];
 			} else {
 				const columnsClause = values.map(() => '??').join(', ');
 				const valuesClause = values.map(() => '?').join(', ');
-				await connection.query(
-					`INSERT INTO ??.?? (${columnsClause}) VALUES (${valuesClause})`,
-					[database, table, ...values.map(value => value.column), ...values.map(value => value.value)],
-				);
+				query = `INSERT INTO ??.?? (${columnsClause}) VALUES (${valuesClause})`;
+				parameters = [database, table, ...values.map(value => value.column), ...values.map(value => value.value)];
 			}
+			pendingRowInsert = { id: crypto.randomUUID(), query, parameters };
+			void panel.webview.postMessage({
+				type: 'rowInsertPreview',
+				confirmationId: pendingRowInsert.id,
+				sql: `${connection.format(query, parameters)};`,
+			});
+		} catch (error) {
+			pendingRowInsert = undefined;
+			void panel.webview.postMessage({ type: 'rowInsertError', message: errorMessage(error) });
+		}
+	}
+
+	async function confirmRowInsert(confirmationIdValue: unknown): Promise<void> {
+		if (!connection || typeof confirmationIdValue !== 'string'
+			|| !pendingRowInsert || pendingRowInsert.id !== confirmationIdValue) {
+			void panel.webview.postMessage({ type: 'rowInsertError', message: 'The SQL preview has expired. Review the values again.' });
+			return;
+		}
+		const { query, parameters } = pendingRowInsert;
+		try {
+			await connection.query(query, parameters);
+			pendingRowInsert = undefined;
 			void panel.webview.postMessage({ type: 'rowInserted' });
 			await loadPage(currentRequest.page, currentRequest.pageSize, currentRequest.sort, currentRequest.filters);
 		} catch (error) {
@@ -1250,6 +1308,10 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		.dialog-header h2 { min-width: 0; margin: 0; overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 		.dialog-header .icon-button { margin-left: auto; }
 		.dialog-fields { display: grid; gap: 12px; padding: 14px; overflow: auto; }
+		.sql-preview { display: grid; gap: 7px; padding: 14px; overflow: auto; }
+		.sql-preview[hidden] { display: none; }
+		.sql-preview pre { min-height: 180px; max-height: 420px; margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border)); border-radius: 3px; color: var(--vscode-editor-foreground); background: var(--vscode-textCodeBlock-background); font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); line-height: 1.5; user-select: text; white-space: pre-wrap; }
+		.sql-preview-label { color: var(--vscode-descriptionForeground); font-size: 12px; }
 		.edit-field { display: grid; gap: 5px; }
 		.field-label { display: flex; align-items: center; gap: 7px; color: var(--vscode-descriptionForeground); font-size: 12px; }
 		.field-label strong { color: var(--vscode-foreground); font-weight: 600; }
@@ -1272,6 +1334,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 	<header>
 		<span class="path">${escapeHtml(database)} › ${escapeHtml(table)}</span>
 		<button id="createRow" class="icon-button" type="button" title="Create row" aria-label="Create row" disabled><i class="codicon codicon-add"></i></button>
+		<button id="refreshTable" class="icon-button" type="button" title="Refresh rows" aria-label="Refresh rows"><i class="codicon codicon-refresh"></i></button>
 		<nav class="pagination" aria-label="Table pagination">
 			<span id="count" class="count">Loading...</span>
 			<select id="pageSize" class="page-size" aria-label="Rows per page">
@@ -1290,6 +1353,10 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 				<button id="closeDialog" class="icon-button" type="button" title="Close" aria-label="Close"><i class="codicon codicon-close"></i></button>
 			</div>
 			<div id="dialogFields" class="dialog-fields"></div>
+			<div id="updateSqlPreview" class="sql-preview" hidden>
+				<span class="sql-preview-label">SQL to execute</span>
+				<pre id="updateSql"></pre>
+			</div>
 			<div class="dialog-footer">
 				<p id="dialogError" class="dialog-error" role="alert"></p>
 				<button id="cancelEdit" class="button secondary" type="button">Cancel</button>
@@ -1305,11 +1372,14 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		const previousPage = document.getElementById('previousPage');
 		const nextPage = document.getElementById('nextPage');
 		const createRow = document.getElementById('createRow');
+		const refreshTable = document.getElementById('refreshTable');
 		const pageStatus = document.getElementById('pageStatus');
 		const editDialog = document.getElementById('editDialog');
 		const editDialogTitle = document.getElementById('editDialogTitle');
 		const editForm = document.getElementById('editForm');
 		const dialogFields = document.getElementById('dialogFields');
+		const updateSqlPreview = document.getElementById('updateSqlPreview');
+		const updateSql = document.getElementById('updateSql');
 		const dialogError = document.getElementById('dialogError');
 		const cancelEdit = document.getElementById('cancelEdit');
 		const saveEdit = document.getElementById('saveEdit');
@@ -1318,6 +1388,7 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		let sort;
 		let editingRow;
 		let dialogMode = 'edit';
+		let updateConfirmationId;
 		let tableMessage;
 		let tableBody;
 		let columnHeaders = [];
@@ -1328,19 +1399,32 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			if (message.type === 'tableLoading') { pageSize.disabled = true; if (!tableMessage) renderStatus('Loading records...'); }
 			if (message.type === 'tableData') renderTable(message);
 			if (message.type === 'tableError') renderError(message.message);
+			if (message.type === 'rowUpdatePreview') showUpdatePreview(message.confirmationId, message.sql);
+			if (message.type === 'rowInsertPreview') showInsertPreview(message.confirmationId, message.sql);
 			if (message.type === 'rowUpdated') editDialog.close();
 			if (message.type === 'rowUpdateError') { dialogError.textContent = message.message; saveEdit.disabled = false; }
 			if (message.type === 'rowInserted') editDialog.close();
 			if (message.type === 'rowInsertError') { dialogError.textContent = message.message; saveEdit.disabled = false; }
 		});
 		createRow.addEventListener('click', openCreateDialog);
+		refreshTable.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
 		pageSize.addEventListener('change', () => loadPage(1));
 		previousPage.addEventListener('click', () => loadPage(currentPage - 1));
 		nextPage.addEventListener('click', () => loadPage(currentPage + 1));
 		document.getElementById('closeDialog').addEventListener('click', () => editDialog.close());
-		cancelEdit.addEventListener('click', () => editDialog.close());
+		cancelEdit.addEventListener('click', () => dialogMode === 'confirmUpdate' || dialogMode === 'confirmCreate' ? showRowFields() : editDialog.close());
 		editForm.addEventListener('submit', event => {
 			event.preventDefault();
+			if (dialogMode === 'confirmUpdate') {
+				saveEdit.disabled = true;
+				vscode.postMessage({ type: 'confirmRowUpdate', confirmationId: updateConfirmationId });
+				return;
+			}
+			if (dialogMode === 'confirmCreate') {
+				saveEdit.disabled = true;
+				vscode.postMessage({ type: 'confirmRowInsert', confirmationId: updateConfirmationId });
+				return;
+			}
 			if (!tableMessage || (dialogMode === 'edit' && !editingRow)) return;
 			const values = {};
 			for (const field of dialogFields.querySelectorAll('.edit-field')) {
@@ -1359,8 +1443,8 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			if (dialogMode === 'edit' && Object.keys(values).length === 0) { editDialog.close(); return; }
 			dialogError.textContent = '';
 			saveEdit.disabled = true;
-			if (dialogMode === 'create') vscode.postMessage({ type: 'insertRow', values });
-			else vscode.postMessage({ type: 'updateRow', rowId: editingRow.rowId, values });
+			if (dialogMode === 'create') vscode.postMessage({ type: 'previewInsertRow', values });
+			else vscode.postMessage({ type: 'previewUpdateRow', rowId: editingRow.rowId, values });
 		});
 		function renderTable(message) {
 			tableMessage = message;
@@ -1488,12 +1572,17 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 		function openCreateDialog() { openRowDialog(undefined, true); }
 		function openRowDialog(row, creating = false) {
 			dialogMode = creating ? 'create' : 'edit';
+			updateConfirmationId = undefined;
 			editingRow = creating ? undefined : row;
 			editDialogTitle.textContent = creating ? 'Create row' : 'Edit row';
 			dialogError.textContent = '';
 			cancelEdit.textContent = 'Cancel';
 			saveEdit.hidden = false;
 			saveEdit.disabled = false;
+			saveEdit.textContent = 'Review SQL';
+			dialogFields.hidden = false;
+			updateSqlPreview.hidden = true;
+			updateSql.textContent = '';
 			dialogFields.replaceChildren(...tableMessage.columnInfo.filter(column => creating
 				? column.editable && !column.autoIncrement
 				: column.editable).map(column => {
@@ -1567,6 +1656,33 @@ function renderTablePreview(webview: vscode.Webview, extensionUri: vscode.Uri, d
 			editDialog.showModal();
 			const firstInput = dialogFields.querySelector('.field-input:not(:disabled)');
 			if (firstInput) firstInput.focus();
+		}
+		function showUpdatePreview(confirmationId, sql) {
+			dialogMode = 'confirmUpdate';
+			showSqlPreview(confirmationId, sql);
+		}
+		function showInsertPreview(confirmationId, sql) {
+			dialogMode = 'confirmCreate';
+			showSqlPreview(confirmationId, sql);
+		}
+		function showSqlPreview(confirmationId, sql) {
+			updateConfirmationId = confirmationId;
+			dialogFields.hidden = true;
+			updateSql.textContent = sql;
+			updateSqlPreview.hidden = false;
+			cancelEdit.textContent = 'Back';
+			saveEdit.textContent = 'Execute';
+			saveEdit.disabled = false;
+		}
+		function showRowFields() {
+			dialogMode = editingRow ? 'edit' : 'create';
+			updateConfirmationId = undefined;
+			dialogFields.hidden = false;
+			updateSqlPreview.hidden = true;
+			updateSql.textContent = '';
+			cancelEdit.textContent = 'Cancel';
+			saveEdit.textContent = 'Review SQL';
+			saveEdit.disabled = false;
 		}
 		function inputType(dataType) {
 			if (dataType === 'date') return 'date';

@@ -7,13 +7,14 @@ export interface MysqlEditorMessage {
 }
 
 export interface MysqlTablePreviewMessage {
-	type: 'loadPage' | 'updateRow' | 'insertRow' | 'deleteRow';
+	type: 'loadPage' | 'refresh' | 'previewUpdateRow' | 'confirmRowUpdate' | 'previewInsertRow' | 'confirmRowInsert' | 'deleteRow';
 	page?: unknown;
 	pageSize?: unknown;
 	sort?: unknown;
 	filters?: unknown;
 	rowId?: unknown;
 	values?: unknown;
+	confirmationId?: unknown;
 }
 
 export interface MysqlTableSort {
