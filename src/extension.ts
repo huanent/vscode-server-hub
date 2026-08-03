@@ -8,7 +8,7 @@ import { initializeSftpFileEditing } from './ssh/sshTerminal';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
 	await initializeSftpFileEditing(context);
-	const serverStore = new ServerStore(context);
+	const serverStore = await ServerStore.create(context);
 	const treeDataProvider = new ServerTreeDataProvider(serverStore);
 	const mysqlSqlEditor = new MysqlSqlEditorController(context, serverStore);
 

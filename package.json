@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -91,6 +91,26 @@
         "icon": "$(edit)"
       },
       {
+        "command": "server-hub.moveGroupUp",
+        "title": "Move Up",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "server-hub.moveGroupDown",
+        "title": "Move Down",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "server-hub.moveServerUp",
+        "title": "Move Up",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "server-hub.moveServerDown",
+        "title": "Move Down",
+        "icon": "$(arrow-down)"
+      },
+      {
         "command": "server-hub.deleteServer",
         "title": "Delete",
         "icon": "$(trash)"
@@ -166,32 +186,52 @@
       "view/item/context": [
         {
           "command": "server-hub.renameGroup",
-          "when": "view == server-hub.servers && viewItem == serverGroup",
+          "when": "view == server-hub.servers && viewItem =~ /^serverGroup/",
           "group": "1_modification"
         },
         {
+          "command": "server-hub.moveGroupUp",
+          "when": "view == server-hub.servers && viewItem =~ /^serverGroup:.*moveUp/",
+          "group": "1_modification@2"
+        },
+        {
+          "command": "server-hub.moveGroupDown",
+          "when": "view == server-hub.servers && viewItem =~ /^serverGroup:.*moveDown/",
+          "group": "1_modification@3"
+        },
+        {
           "command": "server-hub.connectServer",
-          "when": "view == server-hub.servers && (viewItem == sshServer || viewItem == mysqlServer || viewItem == containerServer)",
+          "when": "view == server-hub.servers && viewItem =~ /^(ssh|mysql|container)Server/",
           "group": "inline"
         },
         {
           "command": "server-hub.editServer",
-          "when": "view == server-hub.servers && !listMultiSelection && (viewItem == sshServer || viewItem == mysqlServer || viewItem == containerServer)",
+          "when": "view == server-hub.servers && !listMultiSelection && viewItem =~ /^(ssh|mysql|container)Server/",
           "group": "1_modification"
         },
         {
           "command": "server-hub.copyHost",
-          "when": "view == server-hub.servers && !listMultiSelection && (viewItem == sshServer || viewItem == mysqlServer || viewItem == containerServer)",
+          "when": "view == server-hub.servers && !listMultiSelection && viewItem =~ /^(ssh|mysql|container)Server/",
           "group": "1_modification@2"
         },
         {
           "command": "server-hub.exportServer",
-          "when": "view == server-hub.servers && (viewItem == sshServer || viewItem == mysqlServer || viewItem == containerServer)",
+          "when": "view == server-hub.servers && viewItem =~ /^(ssh|mysql|container)Server/",
           "group": "1_modification@3"
         },
         {
+          "command": "server-hub.moveServerUp",
+          "when": "view == server-hub.servers && !listMultiSelection && viewItem =~ /^(ssh|mysql|container)Server:.*moveUp/",
+          "group": "1_modification@4"
+        },
+        {
+          "command": "server-hub.moveServerDown",
+          "when": "view == server-hub.servers && !listMultiSelection && viewItem =~ /^(ssh|mysql|container)Server:.*moveDown/",
+          "group": "1_modification@5"
+        },
+        {
           "command": "server-hub.deleteServer",
-          "when": "view == server-hub.servers && (viewItem == sshServer || viewItem == mysqlServer || viewItem == containerServer)",
+          "when": "view == server-hub.servers && viewItem =~ /^(ssh|mysql|container)Server/",
           "group": "2_delete"
         }
       ]

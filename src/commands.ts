@@ -15,6 +15,10 @@ const commandIds = {
 	copyHost: 'server-hub.copyHost',
 	editServer: 'server-hub.editServer',
 	renameGroup: 'server-hub.renameGroup',
+	moveGroupUp: 'server-hub.moveGroupUp',
+	moveGroupDown: 'server-hub.moveGroupDown',
+	moveServerUp: 'server-hub.moveServerUp',
+	moveServerDown: 'server-hub.moveServerDown',
 	deleteServer: 'server-hub.deleteServer',
 	openSftp: 'server-hub.openSftp',
 	searchServers: 'server-hub.searchServers',
@@ -57,6 +61,22 @@ export function registerServerCommands(
 		vscode.commands.registerCommand(
 			commandIds.renameGroup,
 			(item: ServerGroupTreeItem) => renameGroup(serverStore, item),
+		),
+		vscode.commands.registerCommand(
+			commandIds.moveGroupUp,
+			(item: ServerGroupTreeItem) => serverStore.moveGroup(item.group, 'up'),
+		),
+		vscode.commands.registerCommand(
+			commandIds.moveGroupDown,
+			(item: ServerGroupTreeItem) => serverStore.moveGroup(item.group, 'down'),
+		),
+		vscode.commands.registerCommand(
+			commandIds.moveServerUp,
+			(item: ServerTreeItem) => serverStore.moveServer(item.server.id, 'up'),
+		),
+		vscode.commands.registerCommand(
+			commandIds.moveServerDown,
+			(item: ServerTreeItem) => serverStore.moveServer(item.server.id, 'down'),
 		),
 		vscode.commands.registerCommand(
 			commandIds.deleteServer,

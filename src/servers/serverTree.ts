@@ -3,24 +3,24 @@ import { Server } from './server';
 import { ServerStore } from './serverStore';
 
 export class ServerTreeItem extends vscode.TreeItem {
-	constructor(readonly server: Server) {
+	constructor(readonly server: Server, canMoveUp = false, canMoveDown = false) {
 		super(server.name, vscode.TreeItemCollapsibleState.None);
 		this.description = serverDescription(server);
 		this.tooltip = `${server.name}\n${this.description}`;
 		this.iconPath = new vscode.ThemeIcon(server.type === 'mysql' ? 'database' : server.type === 'container' ? 'server-process' : 'terminal');
-		this.contextValue = `${server.type}Server`;
+		this.contextValue = treeItemContext(`${server.type}Server`, canMoveUp, canMoveDown);
 	}
 }
 
 export class ServerGroupTreeItem extends vscode.TreeItem {
-	constructor(readonly group: string, serverCount: number, expanded = false) {
+	constructor(readonly group: string, serverCount: number, expanded = false, canMoveUp = false, canMoveDown = false) {
 		super(
 			group || 'Ungrouped',
 			expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed,
 		);
 		this.description = `${serverCount} items`;
 		this.iconPath = new vscode.ThemeIcon('folder');
-		this.contextValue = 'serverGroup';
+		this.contextValue = treeItemContext('serverGroup', canMoveUp, canMoveDown);
 	}
 }
 
@@ -53,9 +53,12 @@ export class ServerTreeDataProvider implements vscode.TreeDataProvider<ServerTre
 	getChildren(element?: ServerTreeNode): ServerTreeNode[] {
 		const servers = this.serverStore.getServers().filter(server => this.matchesFilter(server));
 		if (element instanceof ServerGroupTreeItem) {
-			return servers
-				.filter(server => server.group === element.group)
-				.map(server => new ServerTreeItem(server));
+			const groupServers = servers.filter(server => server.group === element.group);
+			return groupServers.map((server, index) => new ServerTreeItem(
+				server,
+				!this.filter && index > 0,
+				!this.filter && index < groupServers.length - 1,
+			));
 		}
 		if (element) {
 			return [];
@@ -67,12 +70,20 @@ export class ServerTreeDataProvider implements vscode.TreeDataProvider<ServerTre
 				groupedServers.set(server.group, (groupedServers.get(server.group) ?? 0) + 1);
 			}
 		}
-		const ungroupedServers = servers
-			.filter(server => !server.group)
-			.map(server => new ServerTreeItem(server));
-		const groups = [...groupedServers]
-			.sort(([left], [right]) => left.localeCompare(right))
-			.map(([group, serverCount]) => new ServerGroupTreeItem(group, serverCount, Boolean(this.filter)));
+		const ungrouped = servers.filter(server => !server.group);
+		const ungroupedServers = ungrouped.map((server, index) => new ServerTreeItem(
+			server,
+			!this.filter && index > 0,
+			!this.filter && index < ungrouped.length - 1,
+		));
+		const groupEntries = [...groupedServers];
+		const groups = groupEntries.map(([group, serverCount], index) => new ServerGroupTreeItem(
+			group,
+			serverCount,
+			Boolean(this.filter),
+			!this.filter && index > 0,
+			!this.filter && index < groupEntries.length - 1,
+		));
 		return [...groups, ...ungroupedServers];
 	}
 
@@ -88,6 +99,10 @@ export class ServerTreeDataProvider implements vscode.TreeDataProvider<ServerTre
 		this.storeSubscription.dispose();
 		this.changeEmitter.dispose();
 	}
+}
+
+function treeItemContext(type: string, canMoveUp: boolean, canMoveDown: boolean): string {
+	return [type, canMoveUp && 'moveUp', canMoveDown && 'moveDown'].filter(Boolean).join(':');
 }
 
 function serverDescription(server: Server): string {
