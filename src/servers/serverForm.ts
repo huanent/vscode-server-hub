@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { normalizePassword, parseServerForm, Server, ServerFormMessage, ServerType } from './server';
+import { normalizePassword, parseServerForm, Server, ServerFormMessage, ServerType, SshServer, usesPrivateKey } from './server';
 import { ServerCredentials, ServerStore } from './serverStore';
 import { codiconsDistUri, createNonce, escapeHtml } from '../utils';
 
@@ -28,6 +28,7 @@ export async function configureServerForm(
 		serverStore.getGroups(),
 		existingServer,
 		credentials,
+		serverStore.getServers().filter((candidate): candidate is SshServer => candidate.type === 'ssh'),
 	);
 	panel.webview.onDidReceiveMessage(async (message: ServerFormMessage) => {
 		if (message.type === 'selectExecutable') {
@@ -78,11 +79,16 @@ export async function configureServerForm(
 			privateKey: normalizePassword(message.privateKey),
 			passphrase: normalizePassword(message.passphrase),
 		};
-		const authChanged = server?.type === 'ssh'
-			&& existingServer?.type === 'ssh'
-			&& server.authType !== existingServer.authType;
-		const requiresCredential = server?.type !== 'container' && (!isEditing || authChanged);
-		const hasCredential = server?.type === 'container' ? true : server?.type === 'ssh' && server.authType === 'privateKey'
+		const usesOwnCredentials = server?.type === 'ssh'
+			|| server?.type === 'mysql'
+			|| server?.type === 'container' && server.connectionType === 'ssh' && !server.sshServerId;
+		const existingUsesOwnCredentials = existingServer?.type === 'ssh'
+			|| existingServer?.type === 'mysql'
+			|| existingServer?.type === 'container' && existingServer.connectionType === 'ssh' && !existingServer.sshServerId;
+		const credentialsChanged = usesOwnCredentials
+			&& (!existingUsesOwnCredentials || existingServer === undefined || usesPrivateKey(server) !== usesPrivateKey(existingServer));
+		const requiresCredential = usesOwnCredentials && (!isEditing || credentialsChanged);
+		const hasCredential = server && usesPrivateKey(server)
 			? Boolean(credentials.privateKey)
 			: Boolean(credentials.password);
 		if (!server || (requiresCredential && !hasCredential)) {
@@ -102,6 +108,7 @@ function renderServerForm(
 	groups: string[],
 	server?: Server,
 	credentials: ServerCredentials = {},
+	sshServers: SshServer[] = [],
 ): string {
 	const nonce = createNonce();
 	const codiconsUri = webview.asWebviewUri(vscode.Uri.joinPath(codiconsDistUri(extensionUri), 'codicon.css'));
@@ -185,7 +192,7 @@ function renderServerForm(
 			</header>
 			<section class="section" aria-labelledby="connection-heading">
 				<h2 class="section-title" id="connection-heading">Connection details</h2>
-				<div class="fields">${renderServerFields(serverType, server, isEditing, credentials)}</div>
+				<div class="fields">${renderServerFields(serverType, server, isEditing, credentials, sshServers)}</div>
 			</section>
 			<div id="error" role="alert"></div>
 		</main>
@@ -203,6 +210,10 @@ function renderServerForm(
 		const selectPrivateKeyButton = document.getElementById('select-private-key');
 		const selectExecutableButton = document.getElementById('select-executable');
 		const executablePathInput = form.elements.namedItem('executablePath');
+		const connectionType = form.elements.namedItem('connectionType');
+		const sshServerSelect = form.elements.namedItem('sshServerId');
+		const sshFields = document.getElementById('container-ssh-fields');
+		const manualSshFields = document.getElementById('manual-ssh-fields');
 		const groupInput = form.elements.namedItem('group');
 		const groupOptions = document.getElementById('group-options');
 		const isEditing = ${JSON.stringify(isEditing)};
@@ -269,7 +280,7 @@ function renderServerForm(
 		}
 		for (const tab of document.querySelectorAll('.auth-tab')) {
 			tab.addEventListener('click', () => {
-				const field = tab.dataset.field === 'runtime' ? form.elements.namedItem('runtime') : authType;
+				const field = form.elements.namedItem(tab.dataset.field || 'authType');
 				const previousValue = field.value;
 				field.value = tab.dataset.value;
 				if (tab.dataset.field === 'runtime') {
@@ -278,7 +289,7 @@ function renderServerForm(
 						executablePathInput.value = defaults[field.value];
 					}
 				}
-				for (const candidate of document.querySelectorAll('.auth-tab')) {
+				for (const candidate of document.querySelectorAll('.auth-tab[data-field="' + (tab.dataset.field || 'authType') + '"]')) {
 					candidate.setAttribute('aria-selected', String(candidate === tab));
 					candidate.tabIndex = candidate === tab ? 0 : -1;
 				}
@@ -305,7 +316,16 @@ function renderServerForm(
 			vscode.postMessage({ type: 'selectExecutable' });
 		});
 		const updateAuthFields = () => {
-			if (!authType) return;
+			if (connectionType) {
+				const remote = connectionType.value === 'ssh';
+				sshFields.hidden = !remote;
+				selectExecutableButton.hidden = remote;
+				manualSshFields.hidden = !remote || Boolean(sshServerSelect.value);
+				for (const input of manualSshFields.querySelectorAll('input, textarea')) {
+					input.disabled = manualSshFields.hidden;
+				}
+			}
+			if (!authType || authType.disabled) return;
 			const usesPrivateKey = authType.value === 'privateKey';
 			const authChanged = authType.value !== initialAuthType;
 			passwordField.hidden = usesPrivateKey;
@@ -376,11 +396,24 @@ function renderServerFields(
 	server: Server | undefined,
 	isEditing: boolean,
 	credentials: ServerCredentials,
+	sshServers: SshServer[],
 ): string {
 	if (serverType === 'container') {
 		const runtime = server?.type === 'container' ? server.runtime : 'docker';
 		const executablePath = server?.type === 'container' ? server.executablePath : 'docker';
+		const container = server?.type === 'container' ? server : undefined;
+		const connectionType = container?.connectionType ?? 'local';
+		const sshServerId = container?.connectionType === 'ssh' ? container.sshServerId ?? '' : '';
+		const manualSsh = container?.connectionType === 'ssh' && 'authType' in container ? container : undefined;
+		const authType = manualSsh?.authType ?? 'password';
 		return `<div class="field">
+		<input name="connectionType" type="hidden" value="${connectionType}">
+		<div class="auth-tabs" role="tablist" aria-label="Container connection">
+			<button class="auth-tab" type="button" role="tab" data-field="connectionType" data-value="local" aria-selected="${connectionType === 'local'}" tabindex="${connectionType === 'local' ? '0' : '-1'}">Local</button>
+			<button class="auth-tab" type="button" role="tab" data-field="connectionType" data-value="ssh" aria-selected="${connectionType === 'ssh'}" tabindex="${connectionType === 'ssh' ? '0' : '-1'}">SSH</button>
+		</div>
+	</div>
+	<div class="field">
 		<input name="runtime" type="hidden" value="${runtime}">
 		<div class="auth-tabs" role="tablist" aria-label="Container runtime">
 			<button class="auth-tab" type="button" role="tab" data-field="runtime" data-value="docker" aria-selected="${runtime === 'docker'}" tabindex="${runtime === 'docker' ? '0' : '-1'}">Docker</button>
@@ -394,7 +427,36 @@ function renderServerFields(
 			<button id="select-executable" class="file-select" type="button"><span class="codicon codicon-folder-opened" aria-hidden="true"></span>Select file</button>
 		</span>
 		<input name="executablePath" autocomplete="off" required placeholder="docker" value="${escapeHtml(executablePath)}">
-	</label>`;
+	</label>
+	<div class="fields" id="container-ssh-fields" ${connectionType === 'local' ? 'hidden' : ''}>
+		<label class="field">
+			<span class="field-label">SSH configuration</span>
+			<select name="sshServerId">
+				<option value="">Manual configuration</option>
+				${sshServers.map(sshServer => `<option value="${escapeHtml(sshServer.id)}" ${sshServer.id === sshServerId ? 'selected' : ''}>${escapeHtml(sshServer.name)} (${escapeHtml(sshServer.username)}@${escapeHtml(sshServer.host)})</option>`).join('')}
+			</select>
+		</label>
+		<div class="fields" id="manual-ssh-fields" ${sshServerId ? 'hidden' : ''}>
+			<div class="connection">
+				<label class="field"><span class="field-label">Host <span class="required" aria-hidden="true">*</span></span><input name="host" required placeholder="server.example.com" value="${escapeHtml(manualSsh?.host ?? '')}"></label>
+				<label class="field"><span class="field-label">Port <span class="required" aria-hidden="true">*</span></span><input name="port" type="number" min="1" max="65535" value="${manualSsh?.port ?? 22}" required></label>
+			</div>
+			<label class="field"><span class="field-label">Username <span class="required" aria-hidden="true">*</span></span><input name="username" required placeholder="root" value="${escapeHtml(manualSsh?.username ?? '')}"></label>
+			<label class="field"><span class="field-label">Proxy command</span><input name="proxyCommand" spellcheck="false" placeholder="Optional" value="${escapeHtml(manualSsh?.proxyCommand ?? '')}"></label>
+			<div class="field">
+				<input name="authType" type="hidden" value="${authType}">
+				<div class="auth-tabs" role="tablist" aria-label="Authentication method">
+					<button class="auth-tab" type="button" role="tab" data-field="authType" data-value="password" aria-selected="${authType === 'password'}" tabindex="${authType === 'password' ? '0' : '-1'}">Password</button>
+					<button class="auth-tab" type="button" role="tab" data-field="authType" data-value="privateKey" aria-selected="${authType === 'privateKey'}" tabindex="${authType === 'privateKey' ? '0' : '-1'}">Private key</button>
+				</div>
+			</div>
+			<label class="field" id="password-field"><span class="field-label">Password <span class="required" aria-hidden="true">*</span></span><span class="password-control"><input id="password" name="password" type="password" value="${escapeHtml(credentials.password ?? '')}" required><button class="password-toggle codicon codicon-eye" type="button" data-target="password" title="Show value" aria-label="Show value"></button></span></label>
+			<div class="fields" id="private-key-fields" hidden>
+				<label class="field"><span class="field-heading"><span class="field-label">Private key <span class="required" aria-hidden="true">*</span></span><button id="select-private-key" class="file-select" type="button"><span class="codicon codicon-folder-opened" aria-hidden="true"></span>Select file</button></span><textarea name="privateKey" spellcheck="false">${escapeHtml(credentials.privateKey ?? '')}</textarea></label>
+				<label class="field"><span class="field-label">Key passphrase</span><span class="password-control"><input id="passphrase" name="passphrase" type="password" value="${escapeHtml(credentials.passphrase ?? '')}" placeholder="Optional"><button class="password-toggle codicon codicon-eye" type="button" data-target="passphrase" title="Show value" aria-label="Show value"></button></span></label>
+			</div>
+		</div>
+	</div>`;
 	}
 
 	const networkServer = server?.type === 'container' ? undefined : server;
@@ -426,8 +488,8 @@ function renderServerFields(
 	</label>` : `<div class="field">
 		<input name="authType" type="hidden" value="${authType}">
 		<div class="auth-tabs" role="tablist" aria-label="Authentication method">
-			<button class="auth-tab" type="button" role="tab" data-value="password" aria-selected="${authType === 'password'}" tabindex="${authType === 'password' ? '0' : '-1'}">Password</button>
-			<button class="auth-tab" type="button" role="tab" data-value="privateKey" aria-selected="${authType === 'privateKey'}" tabindex="${authType === 'privateKey' ? '0' : '-1'}">Private key</button>
+			<button class="auth-tab" type="button" role="tab" data-field="authType" data-value="password" aria-selected="${authType === 'password'}" tabindex="${authType === 'password' ? '0' : '-1'}">Password</button>
+			<button class="auth-tab" type="button" role="tab" data-field="authType" data-value="privateKey" aria-selected="${authType === 'privateKey'}" tabindex="${authType === 'privateKey' ? '0' : '-1'}">Private key</button>
 		</div>
 	</div>`}
 	<label class="field" id="password-field">

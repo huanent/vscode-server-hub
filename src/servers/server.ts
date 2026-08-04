@@ -24,11 +24,25 @@ export interface MysqlServer extends NetworkServer {
 	database: string;
 }
 
-export interface ContainerServer extends BaseServer {
+interface ContainerServerBase extends BaseServer {
 	type: 'container';
 	runtime: 'docker' | 'podman' | 'apple';
 	executablePath: string;
 }
+
+export type ContainerServer = ContainerServerBase & (
+	| { connectionType: 'local' }
+	| { connectionType: 'ssh'; sshServerId: string }
+	| {
+		connectionType: 'ssh';
+		sshServerId?: undefined;
+		host: string;
+		port: number;
+		username: string;
+		authType: 'password' | 'privateKey';
+		proxyCommand?: string;
+	}
+);
 
 export type Server = SshServer | MysqlServer | ContainerServer;
 
@@ -58,6 +72,8 @@ export interface ServerFormMessage {
 	database?: unknown;
 	runtime?: unknown;
 	executablePath?: unknown;
+	connectionType?: unknown;
+	sshServerId?: unknown;
 }
 
 export function parseServerForm(
@@ -76,13 +92,35 @@ export function parseServerForm(
 		if (!executablePath) {
 			return undefined;
 		}
-		return {
+		const baseServer = {
 			id: serverId ?? crypto.randomUUID(),
 			type: 'container',
 			name,
 			group,
 			runtime,
 			executablePath,
+		} as const;
+		if (message.connectionType !== 'ssh') {
+			return { ...baseServer, connectionType: 'local' };
+		}
+		const sshServerId = normalizeString(message.sshServerId);
+		if (sshServerId) {
+			return { ...baseServer, connectionType: 'ssh', sshServerId };
+		}
+		const host = normalizeString(message.host);
+		const username = normalizeString(message.username);
+		const port = Number(message.port);
+		if (!host || !username || !Number.isInteger(port) || port < 1 || port > 65_535) {
+			return undefined;
+		}
+		return {
+			...baseServer,
+			connectionType: 'ssh',
+			host,
+			port,
+			username,
+			authType: message.authType === 'privateKey' ? 'privateKey' : 'password',
+			...(normalizeString(message.proxyCommand) ? { proxyCommand: normalizeString(message.proxyCommand) } : {}),
 		};
 	}
 
@@ -151,7 +189,7 @@ export function parseServerExport(value: unknown): ExportedServer[] {
 		if (serverIds.has(server.id)) {
 			throw new Error(`Server ${index + 1} uses a duplicate ID.`);
 		}
-		if (server.type === 'ssh' && server.authType === 'privateKey' && typeof entry.privateKey !== 'string') {
+		if (usesPrivateKey(server) && typeof entry.privateKey !== 'string') {
 			throw new Error(`Server ${index + 1} has no private key.`);
 		}
 
@@ -196,6 +234,8 @@ function parseServer(value: unknown, requireType: boolean): Server {
 		database: value.database,
 		runtime: value.runtime,
 		executablePath: value.executablePath,
+		connectionType: value.connectionType,
+		sshServerId: value.sshServerId,
 	}, type, id);
 	if (!server) {
 		throw new Error('Invalid server.');
@@ -209,4 +249,12 @@ function normalizeString(value: unknown): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function usesPrivateKey(server: Server): boolean {
+	return server.type === 'ssh' && server.authType === 'privateKey'
+		|| server.type === 'container'
+			&& server.connectionType === 'ssh'
+			&& 'authType' in server
+			&& server.authType === 'privateKey';
 }

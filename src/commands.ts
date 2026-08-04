@@ -93,7 +93,7 @@ export function registerServerCommands(
 
 function getConnectionAddress(server: Server): string {
 	switch (server.type) {
-		case 'container': return server.executablePath;
+		case 'container': return server.connectionType === 'ssh' && 'host' in server ? server.host : server.executablePath;
 		case 'mysql': return server.host;
 		case 'ssh': return server.host;
 	}

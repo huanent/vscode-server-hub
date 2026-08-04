@@ -1,6 +1,6 @@
 import { watch, FSWatcher } from 'node:fs';
 import * as vscode from 'vscode';
-import { ExportedServer, parseStoredServers, Server } from './server';
+import { ExportedServer, parseStoredServers, Server, usesPrivateKey } from './server';
 
 const serversStateKey = 'server-hub.servers';
 const serversFileName = 'servers.json';
@@ -192,7 +192,15 @@ export class ServerStore {
 	}
 
 	private async saveCredentials(server: Server, credentials: ServerCredentials, replace: boolean): Promise<void> {
-		if (server.type === 'ssh' && server.authType === 'privateKey') {
+		if (server.type === 'container' && (server.connectionType === 'local' || server.sshServerId)) {
+			await Promise.all([
+				this.context.secrets.delete(passwordKey(server.id)),
+				this.context.secrets.delete(privateKeyKey(server.id)),
+				this.context.secrets.delete(passphraseKey(server.id)),
+			]);
+			return;
+		}
+		if (usesPrivateKey(server)) {
 			await this.context.secrets.delete(passwordKey(server.id));
 			if (credentials.privateKey) {
 				await this.context.secrets.store(privateKeyKey(server.id), credentials.privateKey);

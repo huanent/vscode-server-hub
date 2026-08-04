@@ -38,7 +38,7 @@ export function registerServerHubEditor(
 
 			const server = findServer(serverStore, descriptor.serverId);
 			if (descriptor.kind === 'containerEditor' && server.type === 'container') {
-				configureContainerEditor(context.extensionUri, panel, server);
+				configureContainerEditor(context.extensionUri, panel, server, serverStore);
 				return;
 			}
 			if (descriptor.kind === 'sshTerminal' && server.type === 'ssh') {

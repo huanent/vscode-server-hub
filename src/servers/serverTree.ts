@@ -107,7 +107,7 @@ function treeItemContext(type: string, canMoveUp: boolean, canMoveDown: boolean)
 
 function serverDescription(server: Server): string {
 	switch (server.type) {
-		case 'container': return `${server.runtime} · ${server.executablePath}`;
+		case 'container': return `${server.runtime} · ${server.connectionType === 'ssh' ? 'SSH · ' : ''}${server.executablePath}`;
 		case 'mysql': return `${server.username}@${server.host}:${server.port}/${server.database}`;
 		case 'ssh': return `${server.username}@${server.host}:${server.port}`;
 	}
@@ -116,7 +116,7 @@ function serverDescription(server: Server): string {
 function serverSearchValues(server: Server): string[] {
 	const common = [server.name, server.group, server.type];
 	switch (server.type) {
-		case 'container': return [...common, server.runtime, server.executablePath];
+		case 'container': return [...common, server.runtime, server.executablePath, server.connectionType, 'sshServerId' in server ? server.sshServerId ?? '' : '', 'host' in server ? server.host : ''];
 		case 'mysql': return [...common, server.host, server.port.toString(), server.username, server.database];
 		case 'ssh': return [...common, server.host, server.port.toString(), server.username];
 	}

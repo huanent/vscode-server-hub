@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import * as vscode from 'vscode';
-import { ContainerServer } from '../servers/server';
+import { ContainerServer, SshServer } from '../servers/server';
+import { ServerStore } from '../servers/serverStore';
+import { executeSshCommand } from '../ssh/sshCommand';
 import { codiconsDistUri, createNonce, escapeHtml } from '../utils';
 
 const execFileAsync = promisify(execFile);
@@ -29,6 +31,7 @@ export function configureContainerEditor(
 	extensionUri: vscode.Uri,
 	panel: vscode.WebviewPanel,
 	server: ContainerServer,
+	serverStore: ServerStore,
 ): void {
 	panel.title = server.name;
 	panel.iconPath = new vscode.ThemeIcon('server-process');
@@ -66,7 +69,7 @@ export function configureContainerEditor(
 	async function refreshServiceStatus(): Promise<void> {
 		void panel.webview.postMessage({ type: 'serviceStatus', state: 'checking' satisfies ServiceState });
 		try {
-			const state = await readServiceState(server);
+			const state = await readServiceState(server, serverStore);
 			void panel.webview.postMessage({ type: 'serviceStatus', state });
 		} catch (error) {
 			void panel.webview.postMessage({ type: 'serviceStatus', state: 'error' satisfies ServiceState, message: errorMessage(error) });
@@ -76,7 +79,7 @@ export function configureContainerEditor(
 	async function changeAppleSystemState(action: 'start' | 'stop'): Promise<void> {
 		void panel.webview.postMessage({ type: 'systemActionPending', action });
 		try {
-			await executeContainerCommand(server, action === 'start'
+			await executeContainerCommand(server, serverStore, action === 'start'
 				? ['system', 'start', '--disable-kernel-install']
 				: ['system', 'stop']);
 			await refreshServiceStatus();
@@ -97,7 +100,7 @@ export function configureContainerEditor(
 	async function loadResource(resource: ResourceType): Promise<void> {
 		void panel.webview.postMessage({ type: 'loading', resource });
 		try {
-			const rows = await listResource(server, resource);
+			const rows = await listResource(server, serverStore, resource);
 			void panel.webview.postMessage({ type: 'resource', resource, rows });
 		} catch (error) {
 			void panel.webview.postMessage({ type: 'error', resource, message: errorMessage(error) });
@@ -107,7 +110,7 @@ export function configureContainerEditor(
 	async function changeContainerState(id: string, action: 'start' | 'stop'): Promise<void> {
 		void panel.webview.postMessage({ type: 'containerActionPending', id, action });
 		try {
-			await executeContainerCommand(server, [action, id]);
+			await executeContainerCommand(server, serverStore, [action, id]);
 			await loadResource('containers');
 		} catch (error) {
 			void panel.webview.postMessage({ type: 'containerActionError', id, message: errorMessage(error) });
@@ -118,7 +121,7 @@ export function configureContainerEditor(
 
 	async function inspectResource(resource: ResourceType, id: string): Promise<void> {
 		try {
-			const details = await inspectResourceDetails(server, resource, id);
+			const details = await inspectResourceDetails(server, serverStore, resource, id);
 			void panel.webview.postMessage({ type: 'details', resource, id, details });
 		} catch (error) {
 			void panel.webview.postMessage({ type: 'detailsError', message: errorMessage(error) });
@@ -126,30 +129,39 @@ export function configureContainerEditor(
 	}
 }
 
-async function listResource(server: ContainerServer, resource: ResourceType): Promise<ResourceRow[]> {
-	const output = await executeContainerCommand(server, listArguments(server.runtime, resource));
+async function listResource(server: ContainerServer, serverStore: ServerStore, resource: ResourceType): Promise<ResourceRow[]> {
+	const output = await executeContainerCommand(server, serverStore, listArguments(server.runtime, resource));
 	const values = parseListOutput(output, server.runtime);
 	return values.map(value => normalizeResourceRow(server.runtime, resource, value));
 }
 
-async function inspectResourceDetails(server: ContainerServer, resource: ResourceType, id: string): Promise<unknown> {
-	const output = await executeContainerCommand(server, inspectArguments(server.runtime, resource, id));
+async function inspectResourceDetails(server: ContainerServer, serverStore: ServerStore, resource: ResourceType, id: string): Promise<unknown> {
+	const output = await executeContainerCommand(server, serverStore, inspectArguments(server.runtime, resource, id));
 	return JSON.parse(output);
 }
 
-async function readServiceState(server: ContainerServer): Promise<ServiceState> {
+async function readServiceState(server: ContainerServer, serverStore: ServerStore): Promise<ServiceState> {
 	if (server.runtime === 'apple') {
-		const output = await executeContainerCommand(server, ['system', 'status']);
+		const output = await executeContainerCommand(server, serverStore, ['system', 'status']);
 		const match = /^status\s+(\S+)/im.exec(output);
 		return match?.[1].toLowerCase() === 'running' ? 'running' : 'stopped';
 	}
-	await executeContainerCommand(server, server.runtime === 'docker'
+	await executeContainerCommand(server, serverStore, server.runtime === 'docker'
 		? ['info', '--format', '{{.ServerVersion}}']
 		: ['info', '--format', 'json']);
 	return 'running';
 }
 
-async function executeContainerCommand(server: ContainerServer, args: string[]): Promise<string> {
+async function executeContainerCommand(server: ContainerServer, serverStore: ServerStore, args: string[]): Promise<string> {
+	if (server.connectionType === 'ssh') {
+		const { sshServer, credentials } = await resolveSshConnection(server, serverStore);
+		const command = [server.executablePath, ...args].map(shellQuote).join(' ');
+		try {
+			return await executeSshCommand(sshServer, credentials, command);
+		} catch (error) {
+			throw new Error(`${server.runtime} command failed: ${errorMessage(error)}`);
+		}
+	}
 	try {
 		const { stdout } = await execFileAsync(server.executablePath, args, {
 			encoding: 'utf8',
@@ -163,6 +175,38 @@ async function executeContainerCommand(server: ContainerServer, args: string[]):
 		}
 		throw error;
 	}
+}
+
+async function resolveSshConnection(server: ContainerServer, serverStore: ServerStore) {
+	if (server.connectionType !== 'ssh') {
+		throw new Error('The container server is not configured for SSH.');
+	}
+	if (server.sshServerId) {
+		const sshServer = serverStore.getServers().find((candidate): candidate is SshServer => candidate.type === 'ssh' && candidate.id === server.sshServerId);
+		if (!sshServer) {
+			throw new Error('The selected SSH server no longer exists.');
+		}
+		return { sshServer, credentials: await serverStore.getCredentials(sshServer.id) };
+	}
+	if (!('authType' in server)) {
+		throw new Error('The manual SSH configuration is invalid.');
+	}
+	const sshServer: SshServer = {
+		id: server.id,
+		type: 'ssh',
+		name: server.name,
+		group: server.group,
+		host: server.host,
+		port: server.port,
+		username: server.username,
+		authType: server.authType,
+		...(server.proxyCommand ? { proxyCommand: server.proxyCommand } : {}),
+	};
+	return { sshServer, credentials: await serverStore.getCredentials(server.id) };
+}
+
+function shellQuote(value: string): string {
+	return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function listArguments(runtime: ContainerServer['runtime'], resource: ResourceType): string[] {
