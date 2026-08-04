@@ -185,19 +185,24 @@
       ],
       "view/item/context": [
         {
+          "command": "server-hub.addServer",
+          "when": "view == server-hub.servers && viewItem =~ /^serverGroup/",
+          "group": "1_modification@1"
+        },
+        {
           "command": "server-hub.renameGroup",
           "when": "view == server-hub.servers && viewItem =~ /^serverGroup/",
-          "group": "1_modification"
+          "group": "1_modification@2"
         },
         {
           "command": "server-hub.moveGroupUp",
           "when": "view == server-hub.servers && viewItem =~ /^serverGroup:.*moveUp/",
-          "group": "1_modification@2"
+          "group": "1_modification@3"
         },
         {
           "command": "server-hub.moveGroupDown",
           "when": "view == server-hub.servers && viewItem =~ /^serverGroup:.*moveDown/",
-          "group": "1_modification@3"
+          "group": "1_modification@4"
         },
         {
           "command": "server-hub.connectServer",
