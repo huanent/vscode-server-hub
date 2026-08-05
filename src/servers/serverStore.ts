@@ -1,9 +1,13 @@
 import { watch, FSWatcher } from 'node:fs';
+import { homedir } from 'node:os';
+import { isAbsolute, resolve } from 'node:path';
 import * as vscode from 'vscode';
 import { ExportedServer, parseStoredServers, Server, usesPrivateKey } from './server';
 
 const serversStateKey = 'server-hub.servers';
 const serversFileName = 'servers.json';
+const serverStoragePathSetting = 'serverStoragePath';
+const serverFilePattern = /^\d{6}-.+\.json$/;
 
 export interface ServerCredentials {
 	password?: string;
@@ -16,13 +20,14 @@ export type ServerMoveDirection = 'up' | 'down';
 export class ServerStore {
 	private readonly changeEmitter = new vscode.EventEmitter<void>();
 	readonly onDidChange = this.changeEmitter.event;
-	private readonly serversUri: vscode.Uri;
+	private readonly serversDirectoryUri: vscode.Uri;
 	private servers: Server[] = [];
+	private readonly credentials = new Map<string, ServerCredentials>();
 	private watcher: FSWatcher | undefined;
 	private reloadTimer: NodeJS.Timeout | undefined;
 
 	private constructor(private readonly context: vscode.ExtensionContext) {
-		this.serversUri = vscode.Uri.joinPath(context.globalStorageUri, serversFileName);
+		this.serversDirectoryUri = getServersDirectoryUri(context);
 	}
 
 	static async create(context: vscode.ExtensionContext): Promise<ServerStore> {
@@ -46,8 +51,8 @@ export class ServerStore {
 		const updatedServers = exists
 			? servers.map(current => current.id === server.id ? server : current)
 			: [...servers, server];
+		this.saveCredentials(server, credentials, false);
 		await this.writeServers(updatedServers);
-		await this.saveCredentials(server, credentials, false);
 	}
 
 	async renameGroup(group: string, newGroup: string): Promise<void> {
@@ -98,27 +103,18 @@ export class ServerStore {
 
 	async deleteServers(serverIds: string[]): Promise<void> {
 		const deletedIds = new Set(serverIds);
+		serverIds.forEach(serverId => this.credentials.delete(serverId));
 		await this.writeServers(
 			this.getServers().filter(server => !deletedIds.has(server.id)),
 		);
-		await Promise.all(serverIds.flatMap(serverId => [
-			this.context.secrets.delete(passwordKey(serverId)),
-			this.context.secrets.delete(privateKeyKey(serverId)),
-			this.context.secrets.delete(passphraseKey(serverId)),
-		]));
 	}
 
 	getPassword(serverId: string): Thenable<string | undefined> {
-		return this.context.secrets.get(passwordKey(serverId));
+		return Promise.resolve(this.credentials.get(serverId)?.password);
 	}
 
 	async getCredentials(serverId: string): Promise<ServerCredentials> {
-		const [password, privateKey, passphrase] = await Promise.all([
-			this.context.secrets.get(passwordKey(serverId)),
-			this.context.secrets.get(privateKeyKey(serverId)),
-			this.context.secrets.get(passphraseKey(serverId)),
-		]);
-		return { password, privateKey, passphrase };
+		return { ...this.credentials.get(serverId) };
 	}
 
 	async getExportedServers(): Promise<ExportedServer[]> {
@@ -139,24 +135,26 @@ export class ServerStore {
 			...this.getServers().filter(server => !importedIds.has(server.id)),
 			...importedServers.map(({ password: _password, privateKey: _privateKey, passphrase: _passphrase, ...server }) => server),
 		];
+		importedServers.forEach(server => this.saveCredentials(server, server, true));
 		await this.writeServers(updatedServers);
-		await Promise.all(importedServers.map(server => this.saveCredentials(server, server, true)));
 	}
 
 	private async initialize(): Promise<void> {
-		await vscode.workspace.fs.createDirectory(this.context.globalStorageUri);
-		this.watcher = watch(this.context.globalStorageUri.fsPath, (_eventType, fileName) => {
-			if (fileName === serversFileName) {
+		await vscode.workspace.fs.createDirectory(this.serversDirectoryUri);
+		this.watcher = watch(this.serversDirectoryUri.fsPath, (_eventType, fileName) => {
+			if (fileName?.endsWith('.json')) {
 				this.scheduleReload();
 			}
 		});
-		try {
-			await this.reloadServers();
-		} catch (error) {
-			if (!(error instanceof vscode.FileSystemError && error.code === 'FileNotFound')) {
-				throw error;
-			}
-			await this.writeServers(parseStoredServers(this.context.globalState.get<unknown>(serversStateKey, [])));
+		await this.reloadServers();
+		if (this.servers.length === 0) {
+			this.servers = await this.readLegacyServers();
+		}
+		if (await this.migrateSecretCredentials()) {
+			await this.writeServers(this.servers);
+			await this.deleteSecretCredentials();
+		} else if (this.servers.length > 0 && !(await this.hasServerFiles())) {
+			await this.writeServers(this.servers);
 		}
 	}
 
@@ -171,59 +169,116 @@ export class ServerStore {
 	}
 
 	private async reloadServers(): Promise<void> {
-		const content = await vscode.workspace.fs.readFile(this.serversUri);
-		const servers = parseStoredServers(JSON.parse(Buffer.from(content).toString('utf8')));
-		if (JSON.stringify(servers) === JSON.stringify(this.servers)) {
+		const entries = await vscode.workspace.fs.readDirectory(this.serversDirectoryUri);
+		const serverFiles = entries
+			.filter(([name, type]) => type === vscode.FileType.File && serverFilePattern.test(name))
+			.map(([name]) => name)
+			.sort();
+		const storedServers = (await Promise.all(serverFiles.map(async name => {
+			try {
+				const content = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(this.serversDirectoryUri, name));
+				return parseStoredServer(JSON.parse(Buffer.from(content).toString('utf8')));
+			} catch {
+				return undefined;
+			}
+		}))).filter((storedServer): storedServer is StoredServer => storedServer !== undefined);
+		const servers = storedServers.map(({ server }) => server);
+		const credentials = new Map(storedServers
+			.filter(({ hasCredentials }) => hasCredentials)
+			.map(({ server, credentials }) => [server.id, credentials]));
+		if (JSON.stringify(servers) === JSON.stringify(this.servers)
+			&& JSON.stringify([...credentials]) === JSON.stringify([...this.credentials])) {
 			return;
 		}
 		this.servers = servers;
+		this.credentials.clear();
+		credentials.forEach((value, key) => this.credentials.set(key, value));
 		this.changeEmitter.fire();
 	}
 
 	private async writeServers(servers: Server[]): Promise<void> {
-		const temporaryUri = vscode.Uri.joinPath(
-			this.context.globalStorageUri,
-			`${serversFileName}.${process.pid}.${Date.now()}.tmp`,
-		);
-		await vscode.workspace.fs.writeFile(temporaryUri, Buffer.from(JSON.stringify(servers, undefined, 2)));
-		await vscode.workspace.fs.rename(temporaryUri, this.serversUri, { overwrite: true });
+		const existingEntries = await vscode.workspace.fs.readDirectory(this.serversDirectoryUri);
+		const expectedFiles = new Set(servers.map((server, index) => serverFileName(server, index)));
+		await Promise.all(servers.map(async (server, index) => {
+			const fileName = serverFileName(server, index);
+			const serverUri = vscode.Uri.joinPath(this.serversDirectoryUri, fileName);
+			const temporaryUri = vscode.Uri.joinPath(this.serversDirectoryUri, `${fileName}.${process.pid}.${Date.now()}.tmp`);
+			const credentials = this.credentials.get(server.id) ?? {};
+			await vscode.workspace.fs.writeFile(temporaryUri, Buffer.from(JSON.stringify({
+				...server,
+				password: credentials.password ?? '',
+				privateKey: credentials.privateKey ?? '',
+				passphrase: credentials.passphrase ?? '',
+			}, undefined, 2)));
+			await vscode.workspace.fs.rename(temporaryUri, serverUri, { overwrite: true });
+		}));
+		await Promise.all(existingEntries
+			.map(([name, type]) => ({ name, type }))
+			.filter(({ name, type }) => type === vscode.FileType.File && serverFilePattern.test(name) && !expectedFiles.has(name))
+			.map(({ name }) => vscode.workspace.fs.delete(vscode.Uri.joinPath(this.serversDirectoryUri, name))));
 		this.servers = servers;
 		this.changeEmitter.fire();
 	}
 
-	private async saveCredentials(server: Server, credentials: ServerCredentials, replace: boolean): Promise<void> {
-		if (server.type === 'container' && (server.connectionType === 'local' || server.sshServerId)) {
-			await Promise.all([
-				this.context.secrets.delete(passwordKey(server.id)),
-				this.context.secrets.delete(privateKeyKey(server.id)),
-				this.context.secrets.delete(passphraseKey(server.id)),
+	private async readLegacyServers(): Promise<Server[]> {
+		try {
+			const content = await vscode.workspace.fs.readFile(vscode.Uri.joinPath(this.context.globalStorageUri, serversFileName));
+			return parseStoredServers(JSON.parse(Buffer.from(content).toString('utf8')));
+		} catch (error) {
+			if (!(error instanceof vscode.FileSystemError && error.code === 'FileNotFound')) {
+				throw error;
+			}
+			return parseStoredServers(this.context.globalState.get<unknown>(serversStateKey, []));
+		}
+	}
+
+	private async hasServerFiles(): Promise<boolean> {
+		const entries = await vscode.workspace.fs.readDirectory(this.serversDirectoryUri);
+		return entries.some(([name, type]) => type === vscode.FileType.File && serverFilePattern.test(name));
+	}
+
+	private async migrateSecretCredentials(): Promise<boolean> {
+		let changed = false;
+		await Promise.all(this.servers.map(async server => {
+			if (this.credentials.has(server.id)) {
+				return;
+			}
+			const [password, privateKey, passphrase] = await Promise.all([
+				this.context.secrets.get(passwordKey(server.id)),
+				this.context.secrets.get(privateKeyKey(server.id)),
+				this.context.secrets.get(passphraseKey(server.id)),
 			]);
+			this.saveCredentials(server, { password, privateKey, passphrase }, true);
+			changed = true;
+		}));
+		return changed;
+	}
+
+	private async deleteSecretCredentials(): Promise<void> {
+		await Promise.all(this.servers.flatMap(server => [
+			this.context.secrets.delete(passwordKey(server.id)),
+			this.context.secrets.delete(privateKeyKey(server.id)),
+			this.context.secrets.delete(passphraseKey(server.id)),
+		]));
+	}
+
+	private saveCredentials(server: Server, credentials: ServerCredentials, replace: boolean): void {
+		if (server.type === 'container' && (server.connectionType === 'local' || server.sshServerId)) {
+			this.credentials.set(server.id, {});
 			return;
 		}
+		const current = this.credentials.get(server.id) ?? {};
 		if (usesPrivateKey(server)) {
-			await this.context.secrets.delete(passwordKey(server.id));
-			if (credentials.privateKey) {
-				await this.context.secrets.store(privateKeyKey(server.id), credentials.privateKey);
-			} else if (replace) {
-				await this.context.secrets.delete(privateKeyKey(server.id));
-			}
-			if (credentials.passphrase) {
-				await this.context.secrets.store(passphraseKey(server.id), credentials.passphrase);
-			} else if (replace || credentials.passphrase !== undefined) {
-				await this.context.secrets.delete(passphraseKey(server.id));
-			}
+			this.credentials.set(server.id, {
+				privateKey: credentials.privateKey || (replace ? undefined : current.privateKey),
+				passphrase: credentials.passphrase || (replace || credentials.passphrase !== undefined ? undefined : current.passphrase),
+			});
 			return;
 		}
 
-		await Promise.all([
-			this.context.secrets.delete(privateKeyKey(server.id)),
-			this.context.secrets.delete(passphraseKey(server.id)),
-		]);
-		if (credentials.password) {
-			await this.context.secrets.store(passwordKey(server.id), credentials.password);
-		} else if (replace) {
-			await this.context.secrets.delete(passwordKey(server.id));
-		}
+		this.credentials.set(server.id, {
+			password: credentials.password || (replace ? undefined : current.password),
+		});
 	}
 
 	dispose(): void {
@@ -245,4 +300,45 @@ function privateKeyKey(serverId: string): string {
 
 function passphraseKey(serverId: string): string {
 	return `server-hub.passphrase.${serverId}`;
+}
+
+function getServersDirectoryUri(context: vscode.ExtensionContext): vscode.Uri {
+	const configuredPath = vscode.workspace.getConfiguration('server-hub').get<string>(serverStoragePathSetting, '').trim();
+	if (!configuredPath) {
+		return vscode.Uri.joinPath(context.globalStorageUri, 'servers');
+	}
+
+	const expandedPath = configuredPath === '~'
+		? homedir()
+		: configuredPath.startsWith('~/') || configuredPath.startsWith('~\\')
+			? resolve(homedir(), configuredPath.slice(2))
+			: configuredPath;
+	return vscode.Uri.file(isAbsolute(expandedPath) ? expandedPath : resolve(homedir(), expandedPath));
+}
+
+function serverFileName(server: Server, index: number): string {
+	return `${String(index).padStart(6, '0')}-${encodeURIComponent(server.id)}.json`;
+}
+
+interface StoredServer {
+	server: Server;
+	credentials: ServerCredentials;
+	hasCredentials: boolean;
+}
+
+function parseStoredServer(value: unknown): StoredServer | undefined {
+	const server = parseStoredServers([value])[0];
+	if (!server || typeof value !== 'object' || value === null || Array.isArray(value)) {
+		return undefined;
+	}
+	const record = value as Record<string, unknown>;
+	return {
+		server,
+		credentials: {
+			password: typeof record.password === 'string' ? record.password : undefined,
+			privateKey: typeof record.privateKey === 'string' ? record.privateKey : undefined,
+			passphrase: typeof record.passphrase === 'string' ? record.passphrase : undefined,
+		},
+		hasCredentials: 'password' in record || 'privateKey' in record || 'passphrase' in record,
+	};
 }

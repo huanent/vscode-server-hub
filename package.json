@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -19,6 +19,17 @@
     "url": "https://github.com/huanent/vscode-server-hub"
   },
   "contributes": {
+    "configuration": {
+      "title": "ServerHub",
+      "properties": {
+        "server-hub.serverStoragePath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Directory used to store server definitions as individual JSON files. Relative paths and paths starting with ~ are resolved from the user home directory. Restart ServerHub after changing this setting."
+        }
+      }
+    },
     "customEditors": [
       {
         "viewType": "server-hub.editor",
