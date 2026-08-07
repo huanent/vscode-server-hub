@@ -1,0 +1,28 @@
+import * as vscode from 'vscode';
+import { registerServerCommands } from '../../commands';
+import { registerServerHubEditor } from '../../editors/serverHubEditor';
+import { MysqlSqlEditorController } from '../../mysql/mysqlSqlEditor';
+import { ServerStore } from '../../servers/serverStore';
+import { ServerTreeDataProvider } from '../../servers/serverTree';
+
+export async function activateServerHubFeature(context: vscode.ExtensionContext): Promise<void> {
+	const serverStore = await ServerStore.create(context);
+	const treeDataProvider = new ServerTreeDataProvider(serverStore);
+	const mysqlSqlEditor = new MysqlSqlEditorController(context, serverStore);
+
+	context.subscriptions.push(
+		serverStore,
+		treeDataProvider,
+		mysqlSqlEditor,
+		registerServerHubEditor(
+			context,
+			serverStore,
+			(serverId, database, initialSql) => void mysqlSqlEditor.open(serverId, database, initialSql),
+		),
+		registerServerCommands(serverStore, treeDataProvider),
+		vscode.window.createTreeView('server-hub.servers', {
+			treeDataProvider,
+			canSelectMany: true,
+		}),
+	);
+}

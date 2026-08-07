@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { FieldPacket, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { ServerStore } from '../servers/serverStore';
-import { escapeHtml } from '../utils';
+import { getWebviewHtml } from '../webview';
 import { createMysqlConnection } from './mysqlConnection';
 import { displayMysqlValue } from './tableData';
 import { splitMysqlStatements } from './sqlStatements';
@@ -35,6 +35,8 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 	private readonly connectionStatus: vscode.StatusBarItem;
 	private readonly disposables: vscode.Disposable[];
 	private resultPanel: vscode.WebviewPanel | undefined;
+	private currentResult: SqlResultModel | undefined;
+	private resultWebviewReady = false;
 
 	constructor(
 		private readonly context: vscode.ExtensionContext,
@@ -263,17 +265,12 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 		durationMs: number,
 	): void {
 		const columns = fields.map(field => field.name);
-		const header = columns.map(column => `<th title="${escapeHtml(column)}">${escapeHtml(column)}</th>`).join('');
-		const body = rows.map(row => `<tr>${columns.map(column => {
+		const values = rows.map(row => columns.map(column => {
 			const value = displayMysqlValue(row[column]);
-			const displayValue = value === null ? 'NULL' : value;
-			return `<td class="${value === null ? 'null' : ''}" title="${escapeHtml(displayValue)}">${escapeHtml(displayValue)}</td>`;
-		}).join('')}</tr>`).join('');
+			return value;
+		}));
 		this.showResult(
-			serverName,
-			database,
-			`${rows.length.toLocaleString()} row(s) · ${durationMs.toLocaleString()} ms`,
-			`<table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`,
+			{ serverName, database, summary: `${rows.length.toLocaleString()} row(s) · ${durationMs.toLocaleString()} ms`, kind: 'rows', columns, rows: values },
 		);
 	}
 
@@ -291,13 +288,16 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 			parts.push(`${result.warningStatus.toLocaleString()} warning(s)`);
 		}
 		parts.push(`${durationMs.toLocaleString()} ms`);
-		this.showResult(serverName, database, parts.join(' · '), '<div class="empty">Command completed successfully.</div>');
+		this.showResult({ serverName, database, summary: parts.join(' · '), kind: 'command', message: 'Command completed successfully.' });
 	}
 
-	private showResult(serverName: string, database: string, summary: string, content: string): void {
+	private showResult(result: SqlResultModel): void {
+		this.currentResult = result;
 		const panel = this.getResultPanel();
-		panel.title = `SQL Results - ${database}`;
-		panel.webview.html = renderResultHtml(serverName, database, summary, content);
+		panel.title = `SQL Results - ${result.database}`;
+		if (this.resultWebviewReady) {
+			void panel.webview.postMessage({ type: 'result', result });
+		}
 		panel.reveal(vscode.ViewColumn.Beside, true);
 	}
 
@@ -309,11 +309,21 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 			'server-hub.mysqlSqlResults',
 			'SQL Results',
 			{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
-			{},
+			{ enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')] },
 		);
 		panel.iconPath = new vscode.ThemeIcon('table');
+		panel.webview.html = getWebviewHtml(panel.webview, this.context.extensionUri, 'mysqlSqlResults', 'SQL Results');
+		panel.webview.onDidReceiveMessage(message => {
+			if (message?.type === 'ready') {
+				this.resultWebviewReady = true;
+				if (this.currentResult) {
+					void panel.webview.postMessage({ type: 'result', result: this.currentResult });
+				}
+			}
+		});
 		panel.onDidDispose(() => {
 			this.resultPanel = undefined;
+			this.resultWebviewReady = false;
 		});
 		this.resultPanel = panel;
 		return panel;
@@ -358,39 +368,9 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 	}
 }
 
-function renderResultHtml(serverName: string, database: string, summary: string, content: string): string {
-	return `<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
-	<title>SQL Results - ${escapeHtml(database)}</title>
-	<style>
-		:root { color-scheme: light dark; }
-		* { box-sizing: border-box; }
-		html, body { min-width: 320px; min-height: 100%; margin: 0; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); }
-		body { overflow: auto; }
-		.summary { position: sticky; top: 0; z-index: 3; display: flex; min-height: 36px; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 12px; border-bottom: 1px solid var(--vscode-panel-border); background: var(--vscode-editor-background); font-size: 12px; }
-		.connection { min-width: 0; overflow: hidden; color: var(--vscode-descriptionForeground); text-overflow: ellipsis; white-space: nowrap; }
-		.metrics { flex: none; }
-		table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; font-family: var(--vscode-editor-font-family); font-size: 12px; }
-		th, td { max-width: 480px; padding: 6px 10px; overflow: hidden; border-right: 1px solid var(--vscode-panel-border); border-bottom: 1px solid var(--vscode-panel-border); text-align: left; text-overflow: ellipsis; white-space: pre; }
-		th { position: sticky; top: 36px; z-index: 2; background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background)); font-weight: 600; }
-		td.null { color: var(--vscode-descriptionForeground); font-style: italic; }
-		tr:hover td { background: var(--vscode-list-hoverBackground); }
-		.empty { display: grid; min-height: 180px; place-items: center; padding: 24px; color: var(--vscode-descriptionForeground); text-align: center; }
-	</style>
-</head>
-<body>
-	<header class="summary">
-		<div class="connection" title="${escapeHtml(`${serverName} / ${database}`)}">${escapeHtml(serverName)} / ${escapeHtml(database)}</div>
-		<div class="metrics">${escapeHtml(summary)}</div>
-	</header>
-	${content}
-</body>
-</html>`;
-}
+type SqlResultModel =
+	| { serverName: string; database: string; summary: string; kind: 'rows'; columns: string[]; rows: Array<Array<string | null>> }
+	| { serverName: string; database: string; summary: string; kind: 'command'; message: string };
 
 function safeFileName(value: string): string {
 	const fileName = value.replaceAll(/[\\/:*?"<>|\r\n]/g, '_').trim();

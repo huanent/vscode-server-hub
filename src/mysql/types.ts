@@ -1,5 +1,5 @@
 export interface MysqlEditorMessage {
-	type: 'selectDatabase' | 'refresh' | 'openTable' | 'deleteTable' | 'openSql' | 'loadTableDefinition' | 'previewCreateTable' | 'previewAlterTable' | 'confirmTableStatement' | 'createDatabase' | 'deleteDatabase' | 'importDatabase' | 'exportDatabase';
+	type: 'ready' | 'selectDatabase' | 'refresh' | 'openTable' | 'deleteTable' | 'openSql' | 'loadTableDefinition' | 'previewCreateTable' | 'previewAlterTable' | 'confirmTableStatement' | 'createDatabase' | 'deleteDatabase' | 'importDatabase' | 'exportDatabase';
 	database?: unknown;
 	table?: unknown;
 	definition?: unknown;
@@ -7,7 +7,7 @@ export interface MysqlEditorMessage {
 }
 
 export interface MysqlTablePreviewMessage {
-	type: 'loadPage' | 'refresh' | 'previewUpdateRow' | 'confirmRowUpdate' | 'previewInsertRow' | 'confirmRowInsert' | 'deleteRow';
+	type: 'ready' | 'loadPage' | 'refresh' | 'previewUpdateRow' | 'confirmRowUpdate' | 'previewInsertRow' | 'confirmRowInsert' | 'deleteRow';
 	page?: unknown;
 	pageSize?: unknown;
 	sort?: unknown;
