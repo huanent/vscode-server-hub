@@ -258,11 +258,8 @@
     "build": "npm run compile && npm run compile:webview",
     "compile": "rimraf out && tsc -p ./",
     "compile:webview": "tsc -p webview/tsconfig.json && vite build",
-    "watch": "tsc -watch -p ./",
-    "watch:webview": "vite build --watch",
-    "publish": "vsce publish",
-    "prepack": "npm prune",
-    "pack": "vsce pack"
+    "package": "vsce package --no-yarn",
+    "publish": "vsce publish --no-yarn"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
