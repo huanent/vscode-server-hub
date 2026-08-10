@@ -240,15 +240,23 @@ export class ServerStore {
 	private async migrateSecretCredentials(): Promise<boolean> {
 		let changed = false;
 		await Promise.all(this.servers.map(async server => {
-			if (this.credentials.has(server.id)) {
+			if (server.type === 'container' && (server.connectionType === 'local' || server.sshServerId)) {
 				return;
 			}
+			const current = this.credentials.get(server.id) ?? {};
 			const [password, privateKey, passphrase] = await Promise.all([
-				this.context.secrets.get(passwordKey(server.id)),
-				this.context.secrets.get(privateKeyKey(server.id)),
-				this.context.secrets.get(passphraseKey(server.id)),
+				current.password ? undefined : this.context.secrets.get(passwordKey(server.id)),
+				current.privateKey ? undefined : this.context.secrets.get(privateKeyKey(server.id)),
+				current.passphrase ? undefined : this.context.secrets.get(passphraseKey(server.id)),
 			]);
-			this.saveCredentials(server, { password, privateKey, passphrase }, true);
+			if (!password && !privateKey && !passphrase) {
+				return;
+			}
+			this.saveCredentials(server, {
+				password: current.password || password,
+				privateKey: current.privateKey || privateKey,
+				passphrase: current.passphrase || passphrase,
+			}, true);
 			changed = true;
 		}));
 		return changed;
