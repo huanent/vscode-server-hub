@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -132,6 +132,11 @@
         "icon": "$(folder)"
       },
       {
+        "command": "server-hub.runSshCommand",
+        "title": "Run Script",
+        "icon": "$(play)"
+      },
+      {
         "command": "server-hub.searchServers",
         "title": "Search Servers",
         "icon": "$(search)"
@@ -162,9 +167,14 @@
           "group": "navigation@1"
         },
         {
-          "command": "server-hub.openSftp",
+          "command": "server-hub.runSshCommand",
           "when": "activeWebviewPanelId == server-hub.editor && resourceFilename == sshTerminal.server-hub",
           "group": "navigation@1"
+        },
+        {
+          "command": "server-hub.openSftp",
+          "when": "activeWebviewPanelId == server-hub.editor && resourceFilename == sshTerminal.server-hub",
+          "group": "navigation@2"
         }
       ],
       "view/title": [
@@ -224,6 +234,11 @@
           "command": "server-hub.editServer",
           "when": "view == server-hub.servers && !listMultiSelection && viewItem =~ /^(ssh|mysql|container)Server/",
           "group": "1_modification"
+        },
+        {
+          "command": "server-hub.runSshCommand",
+          "when": "view == server-hub.servers && !listMultiSelection && viewItem =~ /^sshServer/",
+          "group": "1_modification@1"
         },
         {
           "command": "server-hub.copyHost",

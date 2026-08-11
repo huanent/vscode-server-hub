@@ -1,4 +1,4 @@
-import { Container, Database, FolderOpen, KeyRound, Save, Server } from 'lucide-react';
+import { Container, Database, FolderOpen, KeyRound, Plus, Save, Server, Trash2 } from 'lucide-react';
 import { FieldLabel, IconButton, PageHeading, PrimaryButton, SelectInput, TextArea, TextInput } from '../../components/ui';
 import { PasswordField } from './components/PasswordField';
 import { SegmentedControl } from './components/SegmentedControl';
@@ -49,6 +49,7 @@ export function ServerFormApp() {
 						{usesAuthentication && <AuthenticationFields form={form} />}
 					</div>
 				</section>
+				{model.serverType === 'ssh' && <CommandFields form={form} />}
 				{form.error && <div className="mt-4 border-l-[3px] border-(--vscode-errorForeground) bg-(--vscode-inputValidation-errorBackground) px-3 py-2.5 text-(--vscode-errorForeground)" role="alert">{form.error}</div>}
 			</main>
 		</form>
@@ -119,6 +120,30 @@ function AuthenticationFields({ form }: { form: FormState }) {
 				<PasswordField label="Key passphrase" placeholder="Optional" value={values.passphrase} onChange={value => form.update('passphrase', value)} />
 			</>}
 	</>;
+}
+
+function CommandFields({ form }: { form: FormState }) {
+	const commands = form.values.commands;
+	const updateCommand = (index: number, key: 'name' | 'value', value: string) => {
+		form.update('commands', commands.map((command, commandIndex) => commandIndex === index ? { ...command, [key]: value } : command));
+	};
+	return (
+		<section className="mt-7 border-t border-(--vscode-panel-border) pt-4.5" aria-labelledby="commands-heading">
+			<div className="mb-3.5 flex items-center justify-between gap-3">
+				<h2 className="m-0 text-sm font-semibold" id="commands-heading">Commands</h2>
+				<IconButton type="button" title="Add command" aria-label="Add command" onClick={() => form.update('commands', [...commands, { name: '', value: '' }])}><Plus size={16} /></IconButton>
+			</div>
+			<div className="grid gap-3">
+				{commands.map((command, index) => (
+					<div className="grid grid-cols-[minmax(120px,0.7fr)_minmax(0,1.3fr)_34px] items-end gap-2 max-[520px]:grid-cols-[minmax(0,1fr)_34px]" key={index}>
+						<Field label="Name" required className="max-[520px]:col-span-2"><TextInput required placeholder="Restart service" value={command.name} onChange={event => updateCommand(index, 'name', event.target.value)} /></Field>
+						<Field label="Command" required><TextInput required spellCheck={false} placeholder="sudo systemctl restart app" value={command.value} onChange={event => updateCommand(index, 'value', event.target.value)} /></Field>
+						<IconButton type="button" title="Remove command" aria-label="Remove command" onClick={() => form.update('commands', commands.filter((_, commandIndex) => commandIndex !== index))}><Trash2 size={16} /></IconButton>
+					</div>
+				))}
+			</div>
+		</section>
+	);
 }
 
 function Field({ label, required, className = '', children }: { label: string; required?: boolean; className?: string; children: React.ReactNode }) {

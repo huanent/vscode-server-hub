@@ -5,7 +5,7 @@ import type { ServerFormExtensionMessage, ServerFormModel, ServerFormValues } fr
 const emptyValues: ServerFormValues = {
 	name: '', group: '', host: '', port: '22', username: '', authType: 'password', proxyCommand: '',
 	password: '', privateKey: '', passphrase: '', database: '', runtime: 'docker', executablePath: 'docker',
-	connectionType: 'local', sshServerId: '',
+	connectionType: 'local', sshServerId: '', commands: [],
 };
 
 export function useServerForm() {
@@ -32,6 +32,7 @@ export function useServerForm() {
 						username: server && 'username' in server ? server.username ?? '' : '',
 						authType: server && 'authType' in server ? server.authType ?? 'password' : 'password',
 						proxyCommand: server && 'proxyCommand' in server ? server.proxyCommand ?? '' : '',
+						commands: server?.type === 'ssh' ? server.commands : [],
 						password: nextModel.credentials.password ?? '',
 						privateKey: nextModel.credentials.privateKey ?? '',
 						passphrase: nextModel.credentials.passphrase ?? '',

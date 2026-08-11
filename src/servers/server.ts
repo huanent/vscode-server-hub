@@ -13,10 +13,16 @@ export interface NetworkServer extends BaseServer {
 	username: string;
 }
 
+export interface ServerCommand {
+	name: string;
+	value: string;
+}
+
 export interface SshServer extends NetworkServer {
 	type: 'ssh';
 	authType: 'password' | 'privateKey';
 	proxyCommand?: string;
+	commands: ServerCommand[];
 }
 
 export interface MysqlServer extends NetworkServer {
@@ -74,6 +80,7 @@ export interface ServerFormMessage {
 	executablePath?: unknown;
 	connectionType?: unknown;
 	sshServerId?: unknown;
+	commands?: unknown;
 }
 
 export function parseServerForm(
@@ -152,6 +159,7 @@ export function parseServerForm(
 		type: 'ssh',
 		authType: message.authType === 'privateKey' ? 'privateKey' : 'password',
 		...(normalizeString(message.proxyCommand) ? { proxyCommand: normalizeString(message.proxyCommand) } : {}),
+		commands: normalizeCommands(message.commands),
 	};
 }
 
@@ -236,6 +244,7 @@ function parseServer(value: unknown, requireType: boolean): Server {
 		executablePath: value.executablePath,
 		connectionType: value.connectionType,
 		sshServerId: value.sshServerId,
+		commands: value.commands,
 	}, type, id);
 	if (!server) {
 		throw new Error('Invalid server.');
@@ -245,6 +254,20 @@ function parseServer(value: unknown, requireType: boolean): Server {
 
 function normalizeString(value: unknown): string {
 	return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeCommands(value: unknown): ServerCommand[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+	return value.flatMap(command => {
+		if (!isRecord(command)) {
+			return [];
+		}
+		const name = normalizeString(command.name);
+		const commandValue = normalizeString(command.value);
+		return name && commandValue ? [{ name, value: commandValue }] : [];
+	});
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

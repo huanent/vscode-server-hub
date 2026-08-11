@@ -56,6 +56,10 @@ export function toggleSftpForActiveTerminal(): void {
 	activeSshSession?.toggleSftp();
 }
 
+export function runCommandInActiveTerminal(serverId: string, command: string): boolean {
+	return activeSshSession?.runCommand(serverId, command) ?? false;
+}
+
 export function configureSshTerminal(
 	context: vscode.ExtensionContext,
 	panel: vscode.WebviewPanel,
@@ -190,6 +194,14 @@ class SshWebviewSession {
 		if (this.sftpVisible && this.connected) {
 			void this.loadSftpDirectory(this.sftpPath);
 		}
+	}
+
+	runCommand(serverId: string, command: string): boolean {
+		if (this.server.id !== serverId || !this.connected || !this.shellStream) {
+			return false;
+		}
+		this.shellStream.write(`${command}\r`);
+		return true;
 	}
 
 	dispose(): void {

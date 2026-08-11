@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
 import { openServerConnection, openServerForm } from './editors/serverHubEditor';
+import { parseEditorDescriptor } from './editors/editorDescriptor';
 import { Server, ServerType } from './servers/server';
 import { ServerStore } from './servers/serverStore';
 import { exportServer, exportServers, importServers } from './servers/serverTransfer';
 import { ServerGroupTreeItem, ServerTreeDataProvider, ServerTreeItem } from './servers/serverTree';
-import { toggleSftpForActiveTerminal } from './ssh/sshTerminal';
+import { executeSshCommand } from './ssh/sshCommand';
+import { runCommandInActiveTerminal, toggleSftpForActiveTerminal } from './ssh/sshTerminal';
 
 const commandIds = {
 	addServer: 'server-hub.addServer',
@@ -23,13 +25,16 @@ const commandIds = {
 	openSftp: 'server-hub.openSftp',
 	searchServers: 'server-hub.searchServers',
 	clearServerSearch: 'server-hub.clearServerSearch',
+	runSshCommand: 'server-hub.runSshCommand',
 } as const;
 
 export function registerServerCommands(
 	serverStore: ServerStore,
 	treeDataProvider: ServerTreeDataProvider,
 ): vscode.Disposable {
+	const commandOutput = vscode.window.createOutputChannel('ServerHub Commands');
 	return vscode.Disposable.from(
+		commandOutput,
 		vscode.commands.registerCommand(commandIds.addServer, selectAndAddServer),
 		vscode.commands.registerCommand(
 			commandIds.importServers,
@@ -88,7 +93,51 @@ export function registerServerCommands(
 		vscode.commands.registerCommand(commandIds.openSftp, toggleSftpForActiveTerminal),
 		vscode.commands.registerCommand(commandIds.searchServers, () => searchServers(treeDataProvider)),
 		vscode.commands.registerCommand(commandIds.clearServerSearch, () => treeDataProvider.setFilter('')),
+		vscode.commands.registerCommand(
+			commandIds.runSshCommand,
+			(item: ServerTreeItem | vscode.Uri) => runSshCommand(serverStore, item, commandOutput),
+		),
 	);
+}
+
+async function runSshCommand(serverStore: ServerStore, item: ServerTreeItem | vscode.Uri, output: vscode.OutputChannel): Promise<void> {
+	const server = item instanceof ServerTreeItem
+		? item.server
+		: serverStore.getServers().find(candidate => candidate.id === parseEditorDescriptor(item).serverId);
+	if (server?.type !== 'ssh') {
+		return;
+	}
+	if (server.commands.length === 0) {
+		void vscode.window.showInformationMessage(`No commands are configured for “${server.name}”.`);
+		return;
+	}
+	const selected = await vscode.window.showQuickPick(
+		server.commands.map(command => ({ label: command.name, description: command.value, command })),
+		{ title: `Run Command on ${server.name}`, placeHolder: 'Select a command to run' },
+	);
+	if (!selected) {
+		return;
+	}
+	if (item instanceof vscode.Uri) {
+		if (!runCommandInActiveTerminal(server.id, selected.command.value)) {
+			void vscode.window.showErrorMessage(`The SSH terminal for “${server.name}” is not connected.`);
+		}
+		return;
+	}
+
+	try {
+		const result = await vscode.window.withProgress({
+			location: vscode.ProgressLocation.Notification,
+			title: `Running “${selected.command.name}” on ${server.name}`,
+		}, async () => executeSshCommand(server, await serverStore.getCredentials(server.id), selected.command.value));
+		output.appendLine(`[${new Date().toLocaleString()}] ${server.name} · ${selected.command.name}`);
+		output.appendLine(`$ ${selected.command.value}`);
+		output.appendLine(result || 'Command completed without output.');
+		output.appendLine('');
+		output.show(true);
+	} catch (error) {
+		void vscode.window.showErrorMessage(`Could not run command: ${error instanceof Error ? error.message : String(error)}`);
+	}
 }
 
 function getConnectionAddress(server: Server): string {

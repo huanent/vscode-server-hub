@@ -3,6 +3,11 @@ export type AuthType = 'password' | 'privateKey';
 export type ContainerRuntime = 'docker' | 'podman' | 'apple';
 export type ConnectionType = 'local' | 'ssh';
 
+export interface ServerCommand {
+	name: string;
+	value: string;
+}
+
 interface BaseServer {
 	id: string;
 	type: ServerType;
@@ -17,6 +22,7 @@ export interface SshServer extends BaseServer {
 	username: string;
 	authType: AuthType;
 	proxyCommand?: string;
+	commands: ServerCommand[];
 }
 
 export interface MysqlServer extends BaseServer {
@@ -72,6 +78,7 @@ export interface ServerFormValues {
 	executablePath: string;
 	connectionType: ConnectionType;
 	sshServerId: string;
+	commands: ServerCommand[];
 }
 
 export type ServerFormExtensionMessage =
