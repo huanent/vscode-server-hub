@@ -29,6 +29,7 @@ const sftpEditFiles = new Map<string, {
 	pendingSave: Promise<void>;
 }>();
 let activeSshSession: SshWebviewSession | undefined;
+const pendingTerminalCommands = new Map<string, string[]>();
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
@@ -60,6 +61,10 @@ export function runCommandInActiveTerminal(serverId: string, command: string): b
 	return activeSshSession?.runCommand(serverId, command) ?? false;
 }
 
+export function queueCommandForTerminal(serverId: string, command: string): void {
+	pendingTerminalCommands.set(serverId, [...pendingTerminalCommands.get(serverId) ?? [], command]);
+}
+
 export function configureSshTerminal(
 	context: vscode.ExtensionContext,
 	panel: vscode.WebviewPanel,
@@ -75,7 +80,9 @@ export function configureSshTerminal(
 	panel.iconPath = new vscode.ThemeIcon('terminal');
 	panel.webview.html = getWebviewHtml(panel.webview, extensionUri, 'sshTerminal', server.name);
 
-	const session = new SshWebviewSession(context.globalState, panel, server, credentials);
+	const queuedCommands = pendingTerminalCommands.get(server.id) ?? [];
+	pendingTerminalCommands.delete(server.id);
+	const session = new SshWebviewSession(context.globalState, panel, server, credentials, queuedCommands);
 	activeSshSession = session;
 	panel.onDidChangeViewState(event => {
 		if (event.webviewPanel.active) {
@@ -113,6 +120,7 @@ class SshWebviewSession {
 		private readonly panel: vscode.WebviewPanel,
 		private readonly server: SshServer,
 		private readonly credentials: ServerCredentials,
+		private readonly pendingCommands: string[],
 	) {}
 
 	handleMessage(message: SshWebviewMessage): void {
@@ -197,10 +205,14 @@ class SshWebviewSession {
 	}
 
 	runCommand(serverId: string, command: string): boolean {
-		if (this.server.id !== serverId || !this.connected || !this.shellStream) {
+		if (this.server.id !== serverId || this.disposed || this.failed) {
 			return false;
 		}
-		this.shellStream.write(`${command}\r`);
+		if (this.connected && this.shellStream) {
+			this.shellStream.write(`${command}\r`);
+		} else {
+			this.pendingCommands.push(command);
+		}
 		return true;
 	}
 
@@ -279,6 +291,9 @@ class SshWebviewSession {
 			this.connected = true;
 			this.shellStream = stream;
 			this.postMessage({ type: 'status', status: 'connected', message: 'Connected' });
+			for (const command of this.pendingCommands.splice(0)) {
+				stream.write(`${command}\r`);
+			}
 			stream.on('data', (data: Buffer) => this.postMessage({ type: 'output', data: data.toString('base64') }));
 			stream.stderr.on('data', (data: Buffer) => this.postMessage({ type: 'output', data: data.toString('base64') }));
 			stream.on('close', () => this.handleShellClosed());
