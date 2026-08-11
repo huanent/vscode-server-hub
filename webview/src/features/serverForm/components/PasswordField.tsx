@@ -1,6 +1,5 @@
-import { Eye, EyeOff } from 'lucide-react';
 import { useState } from 'react';
-import { FieldLabel, IconButton, TextInput } from '../../../components/ui';
+import { Codicon, FieldLabel, IconButton, TextInput } from '../../../components/ui';
 
 export function PasswordField({ label, value, required, placeholder, onChange }: {
 	label: string;
@@ -16,7 +15,7 @@ export function PasswordField({ label, value, required, placeholder, onChange }:
 			<span className="flex">
 				<TextInput className="min-w-0 border-r-0" type={visible ? 'text' : 'password'} value={value} required={required} placeholder={placeholder} onChange={event => onChange(event.target.value)} />
 				<IconButton type="button" title={visible ? 'Hide value' : 'Show value'} aria-label={visible ? 'Hide value' : 'Show value'} onClick={() => setVisible(current => !current)}>
-					{visible ? <EyeOff size={16} /> : <Eye size={16} />}
+					<Codicon name={visible ? 'eye-closed' : 'eye'} />
 				</IconButton>
 			</span>
 		</label>

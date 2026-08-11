@@ -1,4 +1,8 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
+import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
+
+export function Codicon({ name, size = 16, className = '', style, ...props }: { name: string; size?: number; className?: string } & HTMLAttributes<HTMLSpanElement>) {
+	return <span aria-hidden="true" className={`codicon codicon-${name} ${className}`} style={{ fontSize: size, ...style }} {...props} />;
+}
 
 export const inputClassName = 'w-full border border-(--vscode-input-border,var(--vscode-widget-border)) bg-(--vscode-input-background) text-(--vscode-input-foreground) outline-none focus:border-(--vscode-focusBorder)';
 

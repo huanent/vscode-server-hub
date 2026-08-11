@@ -1,4 +1,4 @@
-import { Boxes, CircleAlert, CircleCheck, CircleSlash, Database, Info, LoaderCircle, Network, Package, Pencil, Play, RefreshCw, RotateCw, Square, X } from 'lucide-react';
+import { Boxes, CircleAlert, CircleCheck, CircleSlash, Database, Info, LoaderCircle, Network, Package, Pencil, Play, RefreshCw, RotateCw, Square, X } from '../../components/icons';
 import { useEffect } from 'react';
 import { FieldLabel, IconButton, PrimaryButton, SelectInput, TextArea, TextInput } from '../../components/ui';
 import { useContainerEditor } from './hooks/useContainerEditor';

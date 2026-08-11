@@ -1,4 +1,4 @@
-import { Database, Download, Grid2X2, List, LoaderCircle, Pencil, Plus, RefreshCw, Table2, Trash2, Upload } from 'lucide-react';
+import { Database, Download, Grid2X2, List, LoaderCircle, Pencil, Plus, RefreshCw, Table2, Trash2, Upload } from '../../../components/icons';
 import { IconButton, PrimaryButton, SelectInput, TextInput } from '../../../components/ui';
 import { Dialog } from '../components/Dialog';
 import { SqlPreview } from '../components/SqlPreview';

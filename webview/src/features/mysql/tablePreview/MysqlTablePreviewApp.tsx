@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ChevronsUpDown, LoaderCircle, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronsUpDown, LoaderCircle, Pencil, Plus, RefreshCw, Trash2 } from '../../../components/icons';
 import { useEffect, useState } from 'react';
 import { IconButton, PrimaryButton, SelectInput, TextArea, TextInput } from '../../../components/ui';
 import { Dialog } from '../components/Dialog';

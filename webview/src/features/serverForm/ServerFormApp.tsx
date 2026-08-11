@@ -1,4 +1,4 @@
-import { Container, Database, FolderOpen, KeyRound, Plus, Save, Server, Trash2 } from 'lucide-react';
+import { Container, Database, FolderOpen, KeyRound, Plus, Save, Server, Trash2 } from '../../components/icons';
 import { FieldLabel, IconButton, PageHeading, PrimaryButton, SelectInput, TextArea, TextInput } from '../../components/ui';
 import { PasswordField } from './components/PasswordField';
 import { SegmentedControl } from './components/SegmentedControl';
