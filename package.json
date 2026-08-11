@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.6.6",
+  "version": "1.6.7",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -134,7 +134,7 @@
       {
         "command": "server-hub.runSshCommand",
         "title": "Run Script",
-        "icon": "$(play)"
+        "icon": "$(three-bars)"
       },
       {
         "command": "server-hub.searchServers",
