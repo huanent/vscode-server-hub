@@ -22,6 +22,7 @@ interface SshWebviewMessage {
 
 const metricsRefreshIntervalMs = 5000;
 const sftpFavoritesStateKey = 'server-hub.sftpFavorites';
+const activeSshHasCommandsContextKey = 'server-hub.activeSshHasCommands';
 const sftpEditTempRoot = path.join(os.tmpdir(), 'server-hub-sftp-edit');
 const sftpEditFiles = new Map<string, {
 	remotePath: string;
@@ -84,14 +85,19 @@ export function configureSshTerminal(
 	pendingTerminalCommands.delete(server.id);
 	const session = new SshWebviewSession(context.globalState, panel, server, credentials, queuedCommands);
 	activeSshSession = session;
+	void vscode.commands.executeCommand('setContext', activeSshHasCommandsContextKey, server.commands.length > 0);
 	panel.onDidChangeViewState(event => {
 		if (event.webviewPanel.active) {
 			activeSshSession = session;
+			void vscode.commands.executeCommand('setContext', activeSshHasCommandsContextKey, server.commands.length > 0);
+		} else if (activeSshSession === session) {
+			void vscode.commands.executeCommand('setContext', activeSshHasCommandsContextKey, false);
 		}
 	});
 	panel.onDidDispose(() => {
 		if (activeSshSession === session) {
 			activeSshSession = undefined;
+			void vscode.commands.executeCommand('setContext', activeSshHasCommandsContextKey, false);
 		}
 		session.dispose();
 	});

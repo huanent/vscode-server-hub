@@ -8,7 +8,7 @@ export class ServerTreeItem extends vscode.TreeItem {
 		this.description = serverDescription(server);
 		this.tooltip = `${server.name}\n${this.description}`;
 		this.iconPath = new vscode.ThemeIcon(server.type === 'mysql' ? 'database' : server.type === 'container' ? 'server-process' : 'terminal');
-		this.contextValue = treeItemContext(`${server.type}Server`, canMoveUp, canMoveDown);
+		this.contextValue = treeItemContext(`${server.type}Server`, canMoveUp, canMoveDown, server.type === 'ssh' && server.commands.length > 0);
 	}
 }
 
@@ -101,8 +101,8 @@ export class ServerTreeDataProvider implements vscode.TreeDataProvider<ServerTre
 	}
 }
 
-function treeItemContext(type: string, canMoveUp: boolean, canMoveDown: boolean): string {
-	return [type, canMoveUp && 'moveUp', canMoveDown && 'moveDown'].filter(Boolean).join(':');
+function treeItemContext(type: string, canMoveUp: boolean, canMoveDown: boolean, hasCommands = false): string {
+	return [type, canMoveUp && 'moveUp', canMoveDown && 'moveDown', hasCommands && 'hasCommands'].filter(Boolean).join(':');
 }
 
 function serverDescription(server: Server): string {

@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.6.7",
+  "version": "1.6.8",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -168,7 +168,7 @@
         },
         {
           "command": "server-hub.runSshCommand",
-          "when": "activeWebviewPanelId == server-hub.editor && resourceFilename == sshTerminal.server-hub",
+          "when": "activeWebviewPanelId == server-hub.editor && resourceFilename == sshTerminal.server-hub && server-hub.activeSshHasCommands",
           "group": "navigation@1"
         },
         {
@@ -237,7 +237,7 @@
         },
         {
           "command": "server-hub.runSshCommand",
-          "when": "view == server-hub.servers && !listMultiSelection && viewItem =~ /^sshServer/",
+          "when": "view == server-hub.servers && !listMultiSelection && viewItem =~ /^sshServer:.*hasCommands/",
           "group": "1_modification@1"
         },
         {
