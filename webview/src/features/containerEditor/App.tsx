@@ -1,6 +1,8 @@
 import { Boxes, CircleAlert, CircleCheck, CircleSlash, Database, Info, LoaderCircle, Network, Package, Pencil, Play, RefreshCw, RotateCw, Square, X } from '../../components/icons';
 import { useEffect } from 'react';
-import { FieldLabel, IconButton, PrimaryButton, SelectInput, TextArea, TextInput } from '../../components/ui';
+import { IconButton, PrimaryButton } from '../../components/button';
+import { FieldLabel } from '../../components/field';
+import { SelectInput, TextArea, TextInput } from '../../components/input';
 import { useContainerEditor } from './hooks/useContainerEditor';
 import type { ResourceType } from './types';
 

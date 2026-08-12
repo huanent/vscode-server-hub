@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { Codicon, IconButton } from '../../../components/ui';
+import { IconButton } from '../../../components/button';
+import { Codicon } from '../../../components/codicon';
 
 export function Dialog({ title, children, actions, onClose, wide = false }: { title: string; children: ReactNode; actions?: ReactNode; onClose: () => void; wide?: boolean }) {
 	return <div className="fixed inset-0 z-30 grid place-items-center bg-black/45 p-5" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>

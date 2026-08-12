@@ -1,5 +1,5 @@
 import type { HTMLAttributes } from 'react';
-import { Codicon } from './ui';
+import { Codicon } from './codicon';
 
 type IconProps = Omit<HTMLAttributes<HTMLSpanElement>, 'children'> & { size?: number; fill?: string };
 

@@ -1,5 +1,5 @@
 import { useRef } from 'react';
-import { Codicon } from '../../components/ui';
+import { Codicon } from '../../components/codicon';
 import { SftpPanel } from './SftpPanel';
 import { TerminalView, type TerminalViewHandle } from './TerminalView';
 import { useSshTerminal } from './useSshTerminal';

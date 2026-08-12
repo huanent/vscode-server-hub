@@ -1,6 +1,7 @@
 import { ArrowUp, Copy, Download, Edit3, File, Folder, FolderPlus, Info, MoreHorizontal, RefreshCw, Star, Trash2, Upload } from '../../components/icons';
 import { useEffect, useState } from 'react';
-import { IconButton, TextInput } from '../../components/ui';
+import { IconButton } from '../../components/button';
+import { TextInput } from '../../components/input';
 import type { SftpEntry } from './types';
 
 interface SftpActions {

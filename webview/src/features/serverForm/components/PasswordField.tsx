@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { Codicon, FieldLabel, IconButton, TextInput } from '../../../components/ui';
+import { IconButton } from '../../../components/button';
+import { Codicon } from '../../../components/codicon';
+import { FieldLabel } from '../../../components/field';
+import { TextInput } from '../../../components/input';
 
 export function PasswordField({ label, value, required, placeholder, onChange }: {
 	label: string;

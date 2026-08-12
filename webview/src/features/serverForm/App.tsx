@@ -1,5 +1,8 @@
 import { Container, Database, FolderOpen, KeyRound, Plus, Save, Server, Trash2 } from '../../components/icons';
-import { FieldLabel, IconButton, PageHeading, PrimaryButton, SelectInput, TextArea, TextInput } from '../../components/ui';
+import { IconButton, PrimaryButton } from '../../components/button';
+import { FieldLabel } from '../../components/field';
+import { SelectInput, TextArea, TextInput } from '../../components/input';
+import { PageHeading } from '../../components/pageHeading';
 import { PasswordField } from './components/PasswordField';
 import { SegmentedControl } from './components/SegmentedControl';
 import { useServerForm } from './hooks/useServerForm';
