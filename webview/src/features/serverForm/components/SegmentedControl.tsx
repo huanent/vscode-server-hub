@@ -10,12 +10,12 @@ export function SegmentedControl<Value extends string>({ label, options, value, 
 	onChange: (value: Value) => void;
 }) {
 	return (
-		<div className="inline-grid min-h-8.5 grid-flow-col border border-(--vscode-widget-border)" role="group" aria-label={label}>
+		<div className="inline-grid min-h-8.5 grid-flow-col border border-widget-border" role="group" aria-label={label}>
 			{options.map(option => (
 				<button
 					key={option.value}
 					type="button"
-					className={`border-0 border-r border-(--vscode-widget-border) bg-transparent px-3 text-(--vscode-foreground) last:border-r-0 hover:bg-(--vscode-toolbar-hoverBackground) ${value === option.value ? 'bg-(--vscode-button-background)! text-(--vscode-button-foreground)!' : ''}`}
+					className={`border-0 border-r border-widget-border bg-transparent px-3 text-foreground last:border-r-0 hover:bg-toolbar-hover ${value === option.value ? 'bg-button! text-button-foreground!' : ''}`}
 					aria-pressed={value === option.value}
 					onClick={() => onChange(option.value)}
 				>

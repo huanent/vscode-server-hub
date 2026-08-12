@@ -1,12 +1,14 @@
 @import "@vscode/codicons/dist/codicon.css";
 @import "tailwindcss";
 
-@theme {
+@theme static {
 	--font-sans: var(--vscode-font-family);
 	--font-mono: var(--vscode-editor-font-family);
 	--text-vscode: var(--vscode-font-size);
+	--text-terminal: var(--vscode-editor-font-size);
 	--color-app: var(--vscode-editor-background);
 	--color-foreground: var(--vscode-foreground);
+	--color-editor-foreground: var(--vscode-editor-foreground, var(--vscode-foreground));
 	--color-muted: var(--vscode-descriptionForeground);
 	--color-border: var(--vscode-panel-border, var(--vscode-widget-border));
 	--color-focus: var(--vscode-focusBorder);
@@ -31,12 +33,16 @@
 	--color-menu-separator: var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
 	--color-widget-border: var(--vscode-widget-border, var(--vscode-panel-border));
 	--color-button: var(--vscode-button-background);
+	--color-button-border: var(--vscode-button-border, transparent);
 	--color-button-foreground: var(--vscode-button-foreground);
 	--color-button-hover: var(--vscode-button-hoverBackground);
 	--color-button-secondary: var(--vscode-button-secondaryBackground);
 	--color-button-secondary-foreground: var(--vscode-button-secondaryForeground);
 	--color-button-secondary-hover: var(--vscode-button-secondaryHoverBackground);
 	--color-code: var(--vscode-textCodeBlock-background);
+	--color-dropdown: var(--vscode-dropdown-background);
+	--color-dropdown-border: var(--vscode-dropdown-border, var(--vscode-panel-border));
+	--color-editor-group-header: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
 	--color-error: var(--vscode-errorForeground);
 	--color-error-background: var(--vscode-inputValidation-errorBackground);
 	--color-progress: var(--vscode-progressBar-background);
@@ -44,15 +50,20 @@
 	--color-chart-green: var(--vscode-charts-green);
 	--color-chart-yellow: var(--vscode-charts-yellow);
 	--color-chart-purple: var(--vscode-charts-purple);
+	--color-folder: var(--vscode-symbolIcon-folderForeground, var(--vscode-icon-foreground));
+	--color-success: var(--vscode-testing-iconPassed, var(--vscode-charts-green));
+	--color-terminal-foreground: var(--vscode-terminal-foreground, var(--vscode-editor-foreground));
+	--color-terminal-cursor: var(--vscode-terminalCursor-foreground, var(--vscode-terminal-foreground));
+	--color-terminal-selection: var(--vscode-terminal-selectionBackground);
 	--shadow-widget: 0 4px 16px var(--vscode-widget-shadow);
 	--shadow-menu: 0 2px 8px var(--vscode-widget-shadow);
 }
 
 @layer base {
 	:root {
-		font-family: var(--vscode-font-family);
-		color: var(--vscode-foreground);
-		background: var(--vscode-editor-background);
+		font-family: var(--font-sans);
+		color: var(--color-foreground);
+		background: var(--color-app);
 		color-scheme: light dark;
 	}
 

@@ -15,7 +15,8 @@ export function TerminalView({ ref, onData, onResize, onReady }: { ref: React.Re
 	}), []);
 	useEffect(() => {
 		const style = getComputedStyle(document.documentElement);
-		const terminal = new Terminal({ cursorBlink: true, fontFamily: style.getPropertyValue('--vscode-editor-font-family'), fontSize: Number(style.getPropertyValue('--vscode-editor-font-size').replace('px', '')) || 14, scrollback: 5000, theme: { background: style.getPropertyValue('--vscode-editor-background').trim(), foreground: style.getPropertyValue('--vscode-terminal-foreground').trim() || style.getPropertyValue('--vscode-editor-foreground').trim(), cursor: style.getPropertyValue('--vscode-terminalCursor-foreground').trim(), selectionBackground: style.getPropertyValue('--vscode-terminal-selectionBackground').trim() } });
+		const themeValue = (name: string, fallback = '') => style.getPropertyValue(name).trim() || fallback;
+		const terminal = new Terminal({ cursorBlink: true, fontFamily: themeValue('--font-mono'), fontSize: Number(themeValue('--text-terminal').replace('px', '')) || 14, scrollback: 5000, theme: { background: themeValue('--color-app'), foreground: themeValue('--color-terminal-foreground'), cursor: themeValue('--color-terminal-cursor'), selectionBackground: themeValue('--color-terminal-selection') } });
 		const fit = new FitAddon();
 		terminal.loadAddon(fit);
 		terminal.open(elementRef.current!);

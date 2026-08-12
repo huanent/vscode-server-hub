@@ -7,7 +7,7 @@ import { useServerForm } from './hooks/useServerForm';
 export function App() {
 	const form = useServerForm();
 	if (!form.model) {
-		return <main className="grid min-h-screen place-items-center text-sm text-(--vscode-descriptionForeground)">Loading...</main>;
+		return <main className="grid min-h-screen place-items-center text-sm text-muted">Loading...</main>;
 	}
 
 	const { model, values } = form;
@@ -25,7 +25,7 @@ export function App() {
 
 	return (
 		<form className="min-h-screen" onSubmit={event => { event.preventDefault(); form.save(); }}>
-			<header className="sticky top-0 z-10 border-b border-(--vscode-panel-border) bg-(--vscode-editor-background) px-5 py-3.5">
+			<header className="sticky top-0 z-10 border-b border-border bg-app px-5 py-3.5">
 				<div className="mx-auto grid max-w-205 grid-cols-[minmax(160px,1.25fr)_minmax(140px,1fr)_auto] items-end gap-3 max-[680px]:grid-cols-[minmax(0,1fr)_auto]">
 					<Field label="Name" required>
 						<TextInput autoFocus required placeholder="Production" value={values.name} onChange={event => form.update('name', event.target.value)} />
@@ -41,8 +41,8 @@ export function App() {
 			</header>
 
 			<main className="mx-auto w-[min(640px,calc(100%-44px))] py-8.5 pb-14 max-[680px]:w-[calc(100%-28px)] max-[680px]:pt-7">
-				<PageHeading icon={heading} title={title} description={description} accentClassName={model.serverType === 'mysql' ? 'text-(--vscode-charts-yellow)' : model.serverType === 'container' ? 'text-(--vscode-charts-green)' : 'text-(--vscode-charts-blue)'} />
-				<section className="border-t border-(--vscode-panel-border) pt-4.5" aria-labelledby="connection-heading">
+				<PageHeading icon={heading} title={title} description={description} accentClassName={model.serverType === 'mysql' ? 'text-chart-yellow' : model.serverType === 'container' ? 'text-chart-green' : 'text-chart-blue'} />
+				<section className="border-t border-border pt-4.5" aria-labelledby="connection-heading">
 					<h2 className="mt-0 mb-3.5 text-sm font-semibold" id="connection-heading">Connection details</h2>
 					<div className="grid gap-3.5">
 						{model.serverType === 'container' ? <ContainerFields form={form} /> : <NetworkFields form={form} />}
@@ -50,7 +50,7 @@ export function App() {
 					</div>
 				</section>
 				{model.serverType === 'ssh' && <CommandFields form={form} />}
-				{form.error && <div className="mt-4 border-l-[3px] border-(--vscode-errorForeground) bg-(--vscode-inputValidation-errorBackground) px-3 py-2.5 text-(--vscode-errorForeground)" role="alert">{form.error}</div>}
+				{form.error && <div className="mt-4 border-l-[3px] border-error bg-error-background px-3 py-2.5 text-error" role="alert">{form.error}</div>}
 			</main>
 		</form>
 	);
@@ -128,7 +128,7 @@ function CommandFields({ form }: { form: FormState }) {
 		form.update('commands', commands.map((command, commandIndex) => commandIndex === index ? { ...command, [key]: value } : command));
 	};
 	return (
-		<section className="mt-7 border-t border-(--vscode-panel-border) pt-4.5" aria-labelledby="commands-heading">
+		<section className="mt-7 border-t border-border pt-4.5" aria-labelledby="commands-heading">
 			<div className="mb-3.5 flex items-center justify-between gap-3">
 				<h2 className="m-0 text-sm font-semibold" id="commands-heading">Commands</h2>
 				<IconButton type="button" title="Add command" aria-label="Add command" onClick={() => form.update('commands', [...commands, { name: '', value: '' }])}><Plus size={16} /></IconButton>
@@ -147,5 +147,5 @@ function CommandFields({ form }: { form: FormState }) {
 }
 
 function Field({ label, required, className = '', children }: { label: string; required?: boolean; className?: string; children: React.ReactNode }) {
-	return <label className={`block min-w-0 ${className}`}><FieldLabel>{label}{required && <span className="ml-1 text-(--vscode-errorForeground)">*</span>}</FieldLabel>{children}</label>;
+	return <label className={`block min-w-0 ${className}`}><FieldLabel>{label}{required && <span className="ml-1 text-error">*</span>}</FieldLabel>{children}</label>;
 }
