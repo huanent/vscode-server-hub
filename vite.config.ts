@@ -11,18 +11,23 @@ export default defineConfig({
 		emptyOutDir: true,
 		rollupOptions: {
 			input: {
-				containerEditor: 'webview/src/entries/containerEditor.tsx',
-				mysqlOverview: 'webview/src/entries/mysqlOverview.tsx',
-				mysqlSqlResults: 'webview/src/entries/mysqlSqlResults.tsx',
-				mysqlTablePreview: 'webview/src/entries/mysqlTablePreview.tsx',
-				serverForm: 'webview/src/entries/serverForm.tsx',
-				sshTerminal: 'webview/src/entries/sshTerminal.tsx',
+				containerEditor: 'webview/src/features/containerEditor/main.tsx',
+				mysqlOverview: 'webview/src/features/mysql/overview/main.tsx',
+				mysqlSqlResults: 'webview/src/features/mysql/sqlResults/main.tsx',
+				mysqlTablePreview: 'webview/src/features/mysql/tablePreview/main.tsx',
+				serverForm: 'webview/src/features/serverForm/main.tsx',
+				sshTerminal: 'webview/src/features/sshTerminal/main.tsx',
 			},
 			output: {
 				entryFileNames: '[name].js',
-				assetFileNames: assetInfo => assetInfo.names?.some(name => name.endsWith('.css'))
-					? '[name][extname]'
-					: 'assets/[name]-[hash][extname]',
+				assetFileNames: assetInfo => {
+					if (!assetInfo.names?.some(name => name.endsWith('.css'))) {
+						return 'assets/[name]-[hash][extname]';
+					}
+					return assetInfo.names.some(name => name === 'sshTerminal.css')
+						? 'sshTerminal.css'
+						: 'styles.css';
+				},
 			},
 		},
 		cssCodeSplit: true,

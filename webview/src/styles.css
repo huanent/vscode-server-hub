@@ -1,6 +1,53 @@
 @import "@vscode/codicons/dist/codicon.css";
 @import "tailwindcss";
 
+@theme {
+	--font-sans: var(--vscode-font-family);
+	--font-mono: var(--vscode-editor-font-family);
+	--text-vscode: var(--vscode-font-size);
+	--color-app: var(--vscode-editor-background);
+	--color-foreground: var(--vscode-foreground);
+	--color-muted: var(--vscode-descriptionForeground);
+	--color-border: var(--vscode-panel-border, var(--vscode-widget-border));
+	--color-focus: var(--vscode-focusBorder);
+	--color-icon: var(--vscode-icon-foreground);
+	--color-input: var(--vscode-input-background);
+	--color-input-foreground: var(--vscode-input-foreground);
+	--color-input-border: var(--vscode-input-border, var(--vscode-widget-border, var(--vscode-panel-border)));
+	--color-input-placeholder: var(--vscode-input-placeholderForeground);
+	--color-hover: var(--vscode-list-hoverBackground);
+	--color-hover-foreground: var(--vscode-list-hoverForeground, var(--vscode-foreground));
+	--color-selection: var(--vscode-list-activeSelectionBackground);
+	--color-selection-foreground: var(--vscode-list-activeSelectionForeground);
+	--color-inactive-selection: var(--vscode-list-inactiveSelectionBackground);
+	--color-inactive-selection-foreground: var(--vscode-list-inactiveSelectionForeground, var(--vscode-foreground));
+	--color-toolbar-hover: var(--vscode-toolbar-hoverBackground);
+	--color-toolbar-active: var(--vscode-toolbar-activeBackground, var(--vscode-toolbar-hoverBackground));
+	--color-menu: var(--vscode-menu-background);
+	--color-menu-foreground: var(--vscode-menu-foreground);
+	--color-menu-selection: var(--vscode-menu-selectionBackground);
+	--color-menu-selection-foreground: var(--vscode-menu-selectionForeground);
+	--color-menu-border: var(--vscode-menu-border, var(--vscode-panel-border));
+	--color-menu-separator: var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
+	--color-widget-border: var(--vscode-widget-border, var(--vscode-panel-border));
+	--color-button: var(--vscode-button-background);
+	--color-button-foreground: var(--vscode-button-foreground);
+	--color-button-hover: var(--vscode-button-hoverBackground);
+	--color-button-secondary: var(--vscode-button-secondaryBackground);
+	--color-button-secondary-foreground: var(--vscode-button-secondaryForeground);
+	--color-button-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+	--color-code: var(--vscode-textCodeBlock-background);
+	--color-error: var(--vscode-errorForeground);
+	--color-error-background: var(--vscode-inputValidation-errorBackground);
+	--color-progress: var(--vscode-progressBar-background);
+	--color-chart-blue: var(--vscode-charts-blue);
+	--color-chart-green: var(--vscode-charts-green);
+	--color-chart-yellow: var(--vscode-charts-yellow);
+	--color-chart-purple: var(--vscode-charts-purple);
+	--shadow-widget: 0 4px 16px var(--vscode-widget-shadow);
+	--shadow-menu: 0 2px 8px var(--vscode-widget-shadow);
+}
+
 @layer base {
 	:root {
 		font-family: var(--vscode-font-family);
