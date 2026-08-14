@@ -16,7 +16,9 @@ export function TerminalView({ ref, onData, onResize, onReady }: { ref: React.Re
 	useEffect(() => {
 		const style = getComputedStyle(document.documentElement);
 		const themeValue = (name: string, fallback = '') => style.getPropertyValue(name).trim() || fallback;
-		const terminal = new Terminal({ cursorBlink: true, fontFamily: themeValue('--font-mono'), fontSize: Number(themeValue('--text-terminal').replace('px', '')) || 14, scrollback: 5000, theme: { background: themeValue('--color-app'), foreground: themeValue('--color-terminal-foreground'), cursor: themeValue('--color-terminal-cursor'), selectionBackground: themeValue('--color-terminal-selection') } });
+		const editorForeground = themeValue('--vscode-editor-foreground', themeValue('--vscode-foreground'));
+		const terminalForeground = themeValue('--vscode-terminal-foreground', editorForeground);
+		const terminal = new Terminal({ cursorBlink: true, fontFamily: themeValue('--vscode-editor-font-family'), fontSize: Number(themeValue('--vscode-editor-font-size').replace('px', '')) || 14, scrollback: 5000, theme: { background: themeValue('--vscode-editor-background'), foreground: terminalForeground, cursor: themeValue('--vscode-terminalCursor-foreground', terminalForeground), selectionBackground: themeValue('--vscode-terminal-selectionBackground') } });
 		const fit = new FitAddon();
 		terminal.loadAddon(fit);
 		terminal.open(elementRef.current!);
