@@ -1,6 +1,6 @@
 import { Boxes, CircleAlert, CircleCheck, CircleSlash, Database, Info, LoaderCircle, Network, Package, Pencil, Play, RefreshCw, RotateCw, Square, X } from '../../components/icons';
 import { useEffect } from 'react';
-import { IconButton, PrimaryButton } from '../../components/button';
+import { IconButton, PrimaryButton, SecondaryButton } from '../../components/button';
 import { FieldLabel } from '../../components/field';
 import { SelectInput, TextArea, TextInput } from '../../components/input';
 import { useContainerEditor } from './hooks/useContainerEditor';
@@ -48,7 +48,7 @@ export function App() {
 			</main>
 		</div>
 		{editor.details && <div className="fixed inset-0 z-20 grid place-items-center bg-black/45 p-6" onMouseDown={event => { if (event.target === event.currentTarget) editor.closeDetails(); }}>
-			<section className="grid h-[min(760px,100%)] w-[min(840px,100%)] min-h-0 grid-rows-[42px_minmax(0,1fr)] overflow-hidden border border-(--vscode-panel-border,var(--vscode-widget-border)) bg-(--vscode-editor-background) shadow-[0_4px_16px_var(--vscode-widget-shadow)]" role="dialog" aria-modal="true" aria-labelledby="container-details-title">
+			<section className="grid h-[min(760px,100%)] w-[min(840px,100%)] min-h-0 grid-rows-[42px_minmax(0,1fr)] overflow-hidden rounded-[4px] border border-(--vscode-panel-border,var(--vscode-widget-border)) bg-(--vscode-editor-background) shadow-[0_4px_16px_var(--vscode-widget-shadow)]" role="dialog" aria-modal="true" aria-labelledby="container-details-title">
 				<header className="flex min-w-0 items-center border-b border-(--vscode-panel-border,var(--vscode-widget-border)) pr-1.5 pl-3.5"><h2 id="container-details-title" className="m-0 min-w-0 overflow-hidden text-[13px] font-semibold text-ellipsis whitespace-nowrap">{editor.details.title}</h2><IconButton className="ml-auto border-0" autoFocus type="button" title="Close" aria-label="Close" onClick={editor.closeDetails}><X size={16} /></IconButton></header>
 				<pre className="m-0 overflow-auto bg-(--vscode-textCodeBlock-background) p-3 font-(family-name:--vscode-editor-font-family) text-xs leading-6 whitespace-pre-wrap wrap-break-word">{editor.details.content}</pre>
 			</section>
@@ -71,7 +71,7 @@ function ContainerEditDialog({ editor }: { editor: EditorState }) {
 	const state = editor.containerEditor!;
 	const config = state.config;
 	return <div className="fixed inset-0 z-30 grid place-items-center bg-black/45 p-4" onMouseDown={event => { if (event.target === event.currentTarget) editor.closeContainerEditor(); }}>
-		<form className="grid h-[min(780px,100%)] w-[min(760px,100%)] min-h-0 grid-rows-[46px_minmax(0,1fr)_54px] overflow-hidden border border-(--vscode-panel-border,var(--vscode-widget-border)) bg-(--vscode-editor-background) shadow-[0_4px_16px_var(--vscode-widget-shadow)]" role="dialog" aria-modal="true" aria-labelledby="container-edit-title" onSubmit={event => { event.preventDefault(); editor.recreateContainer(); }}>
+		<form className="grid h-[min(780px,100%)] w-[min(760px,100%)] min-h-0 grid-rows-[46px_minmax(0,1fr)_54px] overflow-hidden rounded-[4px] border border-(--vscode-panel-border,var(--vscode-widget-border)) bg-(--vscode-editor-background) shadow-[0_4px_16px_var(--vscode-widget-shadow)]" role="dialog" aria-modal="true" aria-labelledby="container-edit-title" onSubmit={event => { event.preventDefault(); editor.recreateContainer(); }}>
 			<header className="flex items-center border-b border-(--vscode-panel-border,var(--vscode-widget-border)) px-3.5"><h2 id="container-edit-title" className="m-0 text-[13px] font-semibold">Edit and recreate container</h2><IconButton className="ml-auto border-0" type="button" disabled={state.saving} title="Close" onClick={editor.closeContainerEditor}><X size={16} /></IconButton></header>
 			<div className="min-h-0 overflow-auto p-4">
 				{state.loading ? <Message><LoaderCircle className="animate-spin" size={18} />Loading configuration...</Message> : config ? <div className="grid gap-3.5">
@@ -101,7 +101,7 @@ function ContainerEditDialog({ editor }: { editor: EditorState }) {
 				</div> : null}
 				{state.error && <div className="mt-4 border-l-[3px] border-(--vscode-errorForeground) bg-(--vscode-inputValidation-errorBackground) px-3 py-2.5 text-(--vscode-errorForeground)" role="alert">{state.error}</div>}
 			</div>
-			<footer className="flex items-center justify-end gap-2 border-t border-(--vscode-panel-border,var(--vscode-widget-border)) px-3.5"><button className="h-8.5 border border-(--vscode-button-secondaryBackground) bg-(--vscode-button-secondaryBackground) px-3 text-(--vscode-button-secondaryForeground) hover:bg-(--vscode-button-secondaryHoverBackground) disabled:opacity-55" type="button" disabled={state.saving} onClick={editor.closeContainerEditor}>Cancel</button><PrimaryButton type="submit" disabled={!config || state.loading || state.saving}><RotateCw className={state.saving ? 'animate-spin' : ''} size={15} />{state.saving ? 'Recreating...' : 'Recreate'}</PrimaryButton></footer>
+			<footer className="flex items-center justify-end gap-2 border-t border-(--vscode-panel-border,var(--vscode-widget-border)) px-3.5"><SecondaryButton type="button" disabled={state.saving} onClick={editor.closeContainerEditor}>Cancel</SecondaryButton><PrimaryButton type="submit" disabled={!config || state.loading || state.saving}><RotateCw className={state.saving ? 'animate-spin' : ''} size={15} />{state.saving ? 'Recreating...' : 'Recreate'}</PrimaryButton></footer>
 		</form>
 	</div>;
 }
