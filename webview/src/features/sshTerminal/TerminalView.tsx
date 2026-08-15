@@ -3,7 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useImperativeHandle, useRef } from 'react';
 
-export interface TerminalViewHandle { writeBase64(data: string): void; fit(): void }
+export interface TerminalViewHandle { writeBase64(data: string): void; fit(): void; focus(): void }
 
 export function TerminalView({ ref, onData, onResize, onReady }: { ref: React.Ref<TerminalViewHandle>; onData: (data: string) => void; onResize: (rows: number, columns: number) => void; onReady: () => void }) {
 	const elementRef = useRef<HTMLDivElement>(null);
@@ -12,6 +12,7 @@ export function TerminalView({ ref, onData, onResize, onReady }: { ref: React.Re
 	useImperativeHandle(ref, () => ({
 		writeBase64(data) { terminalRef.current?.write(Uint8Array.from(atob(data), character => character.charCodeAt(0))); },
 		fit() { const element = elementRef.current; if (element && element.clientWidth > 0 && element.clientHeight > 0) fitRef.current?.fit(); },
+		focus() { terminalRef.current?.focus(); },
 	}), []);
 	useEffect(() => {
 		const style = getComputedStyle(document.documentElement);

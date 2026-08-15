@@ -90,6 +90,7 @@ export function configureSshTerminal(
 		if (event.webviewPanel.active) {
 			activeSshSession = session;
 			void vscode.commands.executeCommand('setContext', activeSshHasCommandsContextKey, server.commands.length > 0);
+			void panel.webview.postMessage({ type: 'focusTerminal' });
 		} else if (activeSshSession === session) {
 			void vscode.commands.executeCommand('setContext', activeSshHasCommandsContextKey, false);
 		}

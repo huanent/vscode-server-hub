@@ -4,11 +4,13 @@ import type { ConnectionStatus, RemoteMetricsDisplay, SftpEntry, SshExtensionMes
 
 const emptyMetrics = { cpu: '--', memory: '--', disk: '--', network: '--' };
 
-export function useSshTerminal(onOutput: (data: string) => void, onVisibilityChange: () => void) {
+export function useSshTerminal(onOutput: (data: string) => void, onVisibilityChange: () => void, onFocus: () => void) {
 	const onOutputRef = useRef(onOutput);
 	const onVisibilityChangeRef = useRef(onVisibilityChange);
+	const onFocusRef = useRef(onFocus);
 	onOutputRef.current = onOutput;
 	onVisibilityChangeRef.current = onVisibilityChange;
+	onFocusRef.current = onFocus;
 	const [server, setServer] = useState<{ name: string; address: string }>();
 	const [status, setStatus] = useState<ConnectionStatus>('connecting');
 	const [statusMessage, setStatusMessage] = useState('Preparing terminal');
@@ -29,6 +31,7 @@ export function useSshTerminal(onOutput: (data: string) => void, onVisibilityCha
 				case 'output': onOutputRef.current(message.data); break;
 				case 'metrics': setMetrics(message.metrics); break;
 				case 'metricsUnavailable': setMetrics(emptyMetrics); break;
+				case 'focusTerminal': onFocusRef.current(); break;
 				case 'showSftp': setSftpVisible(true); requestAnimationFrame(() => onVisibilityChangeRef.current()); break;
 				case 'hideSftp': setSftpVisible(false); requestAnimationFrame(() => onVisibilityChangeRef.current()); break;
 				case 'sftpLoading': setSftpLoading(true); break;
@@ -45,7 +48,7 @@ export function useSshTerminal(onOutput: (data: string) => void, onVisibilityCha
 	return {
 		server, status, statusMessage, metrics, sftpVisible, sftpPath, parentPath, entries, favorites, sftpLoading,
 		ready: () => vscode.postMessage({ type: 'ready' }), input: (data: string) => vscode.postMessage({ type: 'input', data }), resize: (rows: number, columns: number) => vscode.postMessage({ type: 'resize', rows, columns }),
-		list: (path: string) => postPath('sftpList', path), toggleFavorite: () => postPath('sftpToggleFavorite', sftpPath),
+		list: (path: string) => postPath('sftpList', path), toggleFavorite: (path = sftpPath) => postPath('sftpToggleFavorite', path),
 		createDirectory: (path = sftpPath) => postPath('sftpCreateDirectory', path), upload: (path = sftpPath) => postPath('sftpUpload', path), properties: (path = sftpPath) => postPath('sftpProperties', path),
 		download: (entry: SftpEntry) => postPath('sftpDownload', entry.path, { isDirectory: entry.isDirectory }), deleteEntry: (entry: SftpEntry) => postPath('sftpDelete', entry.path, { isDirectory: entry.isDirectory }),
 		copyPath: (path: string) => postPath('sftpCopyPath', path), edit: (path: string) => postPath('sftpEdit', path),

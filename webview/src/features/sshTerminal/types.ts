@@ -8,6 +8,7 @@ export type SshExtensionMessage =
 	| { type: 'output'; data: string }
 	| { type: 'metrics'; metrics: RemoteMetricsDisplay }
 	| { type: 'metricsUnavailable' }
+	| { type: 'focusTerminal' }
 	| { type: 'showSftp' }
 	| { type: 'hideSftp' }
 	| { type: 'sftpLoading'; path: string }
