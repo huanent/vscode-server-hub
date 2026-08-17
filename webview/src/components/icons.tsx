@@ -12,6 +12,8 @@ function icon(name: string) {
 export const ArrowDown = icon('arrow-down');
 export const ArrowUp = icon('arrow-up');
 export const Boxes = icon('vm');
+export const ChevronLeft = icon('chevron-left');
+export const ChevronRight = icon('chevron-right');
 export const ChevronsUpDown = icon('arrow-swap');
 export const CircleAlert = icon('warning');
 export const CircleCheck = icon('check');
@@ -41,7 +43,7 @@ export const RotateCw = icon('sync');
 export const Save = icon('save');
 export const Server = icon('server');
 export const Square = icon('debug-stop');
-export const Table2 = icon('table');
+export const Gist = icon('gist');
 export const Trash2 = icon('trash');
 export const Upload = icon('cloud-upload');
 export const X = icon('close');

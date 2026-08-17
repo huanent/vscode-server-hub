@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { homedir } from 'node:os';
 import { FieldPacket, ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { ServerStore } from '../servers/serverStore';
 import { getWebviewHtml } from '../webview';
@@ -7,7 +8,9 @@ import { displayMysqlValue } from './tableData';
 import { splitMysqlStatements } from './sqlStatements';
 
 const executeCommandId = 'server-hub.executeMysqlSql';
+const exportResultsCommandId = 'server-hub.exportMysqlSqlResults';
 const activeContextKey = 'server-hub.mysqlSqlEditorActive';
+const resultsExportableContextKey = 'server-hub.mysqlSqlResultsExportable';
 
 interface SqlDocumentContext {
 	serverId: string;
@@ -47,6 +50,7 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 		this.disposables = [
 			this.connectionStatus,
 			vscode.commands.registerTextEditorCommand(executeCommandId, editor => this.execute(editor)),
+			vscode.commands.registerCommand(exportResultsCommandId, () => this.exportResult()),
 			vscode.languages.registerCompletionItemProvider(
 				{ language: 'sql' },
 				{ provideCompletionItems: (document, position) => this.provideCompletionItems(document, position) },
@@ -90,6 +94,7 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 
 	dispose(): void {
 		void vscode.commands.executeCommand('setContext', activeContextKey, false);
+		void vscode.commands.executeCommand('setContext', resultsExportableContextKey, false);
 		this.resultPanel?.dispose();
 		for (const disposable of this.disposables) {
 			disposable.dispose();
@@ -293,6 +298,7 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 
 	private showResult(result: SqlResultModel): void {
 		this.currentResult = result;
+		void vscode.commands.executeCommand('setContext', resultsExportableContextKey, result.kind === 'rows');
 		const panel = this.getResultPanel();
 		panel.title = `SQL Results - ${result.database}`;
 		if (this.resultWebviewReady) {
@@ -324,9 +330,40 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 		panel.onDidDispose(() => {
 			this.resultPanel = undefined;
 			this.resultWebviewReady = false;
+			void vscode.commands.executeCommand('setContext', resultsExportableContextKey, false);
 		});
 		this.resultPanel = panel;
 		return panel;
+	}
+
+	private async exportResult(): Promise<void> {
+		const result = this.currentResult;
+		if (!result || result.kind !== 'rows') {
+			return;
+		}
+		const format = await vscode.window.showQuickPick([
+			{ label: 'JSON', description: 'JSON object array', extension: 'json' as const },
+			{ label: 'CSV', description: 'Comma-separated values', extension: 'csv' as const },
+		], { placeHolder: 'Select export format', title: 'Export SQL Results' });
+		if (!format) {
+			return;
+		}
+		const target = await vscode.window.showSaveDialog({
+			filters: { [format.label]: [format.extension] },
+			defaultUri: vscode.Uri.joinPath(vscode.Uri.file(homedir()), `${safeFileName(result.database)}-results.${format.extension}`),
+			saveLabel: 'Export',
+		});
+		if (!target) {
+			return;
+		}
+		const contents = format.extension === 'json' ? serializeJsonResult(result) : serializeCsvResult(result);
+		try {
+			await vscode.workspace.fs.writeFile(target, Buffer.from(contents, 'utf8'));
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not export SQL results: ${errorMessage(error)}`);
+			return;
+		}
+		void vscode.window.showInformationMessage(`Exported ${result.rows.length.toLocaleString()} row(s) as ${format.label}.`);
 	}
 
 	private updateActiveContext(): void {
@@ -375,6 +412,16 @@ type SqlResultModel =
 function safeFileName(value: string): string {
 	const fileName = value.replaceAll(/[\\/:*?"<>|\r\n]/g, '_').trim();
 	return fileName || 'query';
+}
+
+function serializeJsonResult(result: Extract<SqlResultModel, { kind: 'rows' }>): string {
+	const rows = result.rows.map(row => Object.fromEntries(result.columns.map((column, index) => [column, row[index]])));
+	return `${JSON.stringify(rows, undefined, 2)}\n`;
+}
+
+function serializeCsvResult(result: Extract<SqlResultModel, { kind: 'rows' }>): string {
+	const escape = (value: string | null) => value === null ? '' : `"${value.replaceAll('"', '""')}"`;
+	return `${[result.columns.map(escape), ...result.rows.map(row => row.map(escape))].map(row => row.join(',')).join('\r\n')}\r\n`;
 }
 
 function createIdentifierCompletion(

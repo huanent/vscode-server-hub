@@ -2,19 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { vscode } from '../../../vscodeApi';
 import type { MysqlOverviewExtensionMessage, MysqlTableColumnDefinition, MysqlTableDefinition, MysqlTableInfo } from '../types';
 
-type ViewMode = 'list' | 'grid';
 type DialogState = { mode: 'create' | 'edit'; originalTable?: string; definition: MysqlTableDefinition; loading?: boolean; sql?: string; confirmationId?: string };
 
 const defaultColumn = (): MysqlTableColumnDefinition => ({ name: '', type: 'VARCHAR', length: '', nullable: false, primaryKey: false, autoIncrement: false, defaultKind: 'none', defaultValue: '' });
 const defaultDefinition = (): MysqlTableDefinition => ({ name: '', columns: [{ ...defaultColumn(), name: 'id', type: 'BIGINT', primaryKey: true, autoIncrement: true }, { ...defaultColumn(), name: 'name', length: '255' }] });
 
 export function useMysqlOverview() {
-	const persisted = vscode.getState() as { database?: string; view?: ViewMode } | undefined;
+	const persisted = vscode.getState() as { database?: string } | undefined;
 	const [server, setServer] = useState<{ name: string; address: string; database: string }>();
 	const [databases, setDatabases] = useState<string[]>([]);
 	const [database, setDatabaseState] = useState(persisted?.database ?? '');
 	const [tables, setTables] = useState<MysqlTableInfo[]>([]);
-	const [view, setViewState] = useState<ViewMode>(persisted?.view === 'grid' ? 'grid' : 'list');
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState('');
 	const [dialog, setDialog] = useState<DialogState>();
@@ -47,13 +45,12 @@ export function useMysqlOverview() {
 		return () => window.removeEventListener('message', handleMessage);
 	}, []);
 
-	useEffect(() => { vscode.setState({ database, view }); }, [database, view]);
+	useEffect(() => { vscode.setState({ database }); }, [database]);
 	const setDatabase = (value: string) => { databaseRef.current = value; setDatabaseState(value); setLoading(true); setTables([]); vscode.postMessage({ type: 'selectDatabase', database: value }); };
-	const setView = (value: ViewMode) => setViewState(value);
 	const updateDefinition = (definition: MysqlTableDefinition) => setDialog(current => current ? { ...current, definition, sql: undefined, confirmationId: undefined } : current);
 	const preview = () => dialog && vscode.postMessage({ type: dialog.mode === 'create' ? 'previewCreateTable' : 'previewAlterTable', database, table: dialog.originalTable, definition: dialog.definition });
 	return {
-		server, databases, database, tables, view, loading, error, dialog, setDatabase, setView, updateDefinition, preview,
+		server, databases, database, tables, loading, error, dialog, setDatabase, updateDefinition, preview,
 		refresh: () => vscode.postMessage({ type: 'refresh' }), createDatabase: () => vscode.postMessage({ type: 'createDatabase' }),
 		deleteDatabase: () => vscode.postMessage({ type: 'deleteDatabase', database }), importDatabase: () => vscode.postMessage({ type: 'importDatabase' }), exportDatabase: () => vscode.postMessage({ type: 'exportDatabase', database }),
 		openSql: () => vscode.postMessage({ type: 'openSql', database }), openTable: (table: string) => vscode.postMessage({ type: 'openTable', database, table }), deleteTable: (table: string) => vscode.postMessage({ type: 'deleteTable', database, table }),

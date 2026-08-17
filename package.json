@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.6.10",
+  "version": "1.6.11",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -150,6 +150,11 @@
         "command": "server-hub.executeMysqlSql",
         "title": "Execute SQL",
         "icon": "$(play)"
+      },
+      {
+        "command": "server-hub.exportMysqlSqlResults",
+        "title": "Export SQL Results",
+        "icon": "$(cloud-download)"
       }
     ],
     "keybindings": [
@@ -164,6 +169,11 @@
         {
           "command": "server-hub.executeMysqlSql",
           "when": "editorLangId == sql && server-hub.mysqlSqlEditorActive",
+          "group": "navigation@1"
+        },
+        {
+          "command": "server-hub.exportMysqlSqlResults",
+          "when": "activeWebviewPanelId == server-hub.mysqlSqlResults && server-hub.mysqlSqlResultsExportable",
           "group": "navigation@1"
         },
         {
