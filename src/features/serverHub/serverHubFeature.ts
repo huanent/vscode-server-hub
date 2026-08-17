@@ -23,6 +23,7 @@ export async function activateServerHubFeature(context: vscode.ExtensionContext)
 		vscode.window.createTreeView('server-hub.servers', {
 			treeDataProvider,
 			canSelectMany: true,
+			showCollapseAll: true,
 		}),
 	);
 }
