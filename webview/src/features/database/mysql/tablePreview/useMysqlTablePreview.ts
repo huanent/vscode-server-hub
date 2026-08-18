@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { vscode } from '../../../vscodeApi';
+import { vscode } from '../../../../vscodeApi';
 import type { MysqlColumnInfo, MysqlPreviewRow, MysqlTableFilter, MysqlTablePreviewExtensionMessage, MysqlTableSort } from '../types';
 
 interface TableData {

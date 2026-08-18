@@ -318,7 +318,7 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 			{ enableScripts: true, localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')] },
 		);
 		panel.iconPath = new vscode.ThemeIcon('table');
-		panel.webview.html = getWebviewHtml(panel.webview, this.context.extensionUri, 'mysqlSqlResults', 'SQL Results');
+		panel.webview.html = getWebviewHtml(panel.webview, this.context.extensionUri, 'databaseSqlResults', 'SQL Results');
 		panel.webview.onDidReceiveMessage(message => {
 			if (message?.type === 'ready') {
 				this.resultWebviewReady = true;

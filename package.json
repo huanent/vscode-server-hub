@@ -40,6 +40,22 @@
           }
         ],
         "priority": "option"
+      },
+      {
+        "viewType": "server-hub.sqliteEditor",
+        "displayName": "SQLite Database",
+        "selector": [
+          {
+            "filenamePattern": "*.db"
+          },
+          {
+            "filenamePattern": "*.sqlite"
+          },
+          {
+            "filenamePattern": "*.sqlite3"
+          }
+        ],
+        "priority": "default"
       }
     ],
     "viewsContainers": {
@@ -155,6 +171,11 @@
         "command": "server-hub.exportMysqlSqlResults",
         "title": "Export SQL Results",
         "icon": "$(cloud-download)"
+      },
+      {
+        "command": "server-hub.executeSqliteSql",
+        "title": "Execute SQLite SQL",
+        "icon": "$(play)"
       }
     ],
     "keybindings": [
@@ -162,6 +183,11 @@
         "command": "server-hub.executeMysqlSql",
         "key": "f5",
         "when": "editorTextFocus && editorLangId == sql && server-hub.mysqlSqlEditorActive"
+      },
+      {
+        "command": "server-hub.executeSqliteSql",
+        "key": "f5",
+        "when": "editorTextFocus && editorLangId == sql && server-hub.sqliteSqlEditorActive"
       }
     ],
     "menus": {
@@ -169,6 +195,11 @@
         {
           "command": "server-hub.executeMysqlSql",
           "when": "editorLangId == sql && server-hub.mysqlSqlEditorActive",
+          "group": "navigation@1"
+        },
+        {
+          "command": "server-hub.executeSqliteSql",
+          "when": "editorLangId == sql && server-hub.sqliteSqlEditorActive",
           "group": "navigation@1"
         },
         {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { vscode } from '../../../vscodeApi';
+import { vscode } from '../../../../vscodeApi';
 import type { MysqlOverviewExtensionMessage, MysqlTableColumnDefinition, MysqlTableDefinition, MysqlTableInfo } from '../types';
 
 type DialogState = { mode: 'create' | 'edit'; originalTable?: string; definition: MysqlTableDefinition; loading?: boolean; sql?: string; confirmationId?: string };

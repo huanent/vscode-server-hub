@@ -12,9 +12,11 @@ export default defineConfig({
 		rollupOptions: {
 			input: {
 				containerEditor: 'webview/src/features/containerEditor/main.tsx',
-				mysqlOverview: 'webview/src/features/mysql/overview/main.tsx',
-				mysqlSqlResults: 'webview/src/features/mysql/sqlResults/main.tsx',
-				mysqlTablePreview: 'webview/src/features/mysql/tablePreview/main.tsx',
+				databaseSqlResults: 'webview/src/features/database/sqlResults/main.tsx',
+				mysqlOverview: 'webview/src/features/database/mysql/overview/main.tsx',
+				mysqlTablePreview: 'webview/src/features/database/mysql/tablePreview/main.tsx',
+				sqliteOverview: 'webview/src/features/database/sqlite/overview/main.tsx',
+				sqliteTablePreview: 'webview/src/features/database/sqlite/tablePreview/main.tsx',
 				serverForm: 'webview/src/features/serverForm/main.tsx',
 				sshTerminal: 'webview/src/features/sshTerminal/main.tsx',
 			},
