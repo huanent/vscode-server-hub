@@ -19,6 +19,9 @@ export function useSqliteOverview() {
 			const message = event.data;
 			switch (message.type) {
 				case 'initialize': setServer(message.server); break;
+				case 'titleOpenSql': vscode.postMessage({ type: 'openSql' }); break;
+				case 'titleCreateTable': setError(''); setDialog({ mode: 'create', definition: defaultDefinition() }); break;
+				case 'titleRefresh': vscode.postMessage({ type: 'refresh' }); break;
 				case 'tablesLoading': setLoading(true); setError(''); break;
 				case 'tables': setTables(message.tables); setLoading(false); setError(''); break;
 				case 'connectionError': case 'tablesError': setLoading(false); setError(message.message); break;

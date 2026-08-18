@@ -30,6 +30,9 @@ export interface SqliteTableDefinition {
 
 export type SqliteOverviewExtensionMessage =
 	| { type: 'initialize'; server: { name: string; address: string; database: string } }
+	| { type: 'titleOpenSql' }
+	| { type: 'titleCreateTable' }
+	| { type: 'titleRefresh' }
 	| { type: 'tablesLoading'; database: string }
 	| { type: 'tables'; database: string; tables: SqliteTableInfo[] }
 	| { type: 'connectionError'; message: string }

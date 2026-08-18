@@ -7,6 +7,9 @@ import { openSqliteTablePreview } from './sqliteTablePreview';
 import { errorMessage, quoteIdentifier, quoteValue, readColumnMetadata } from './sqliteUtils';
 
 const sqliteEditorViewType = 'server-hub.sqliteEditor';
+const openSqlCommandId = 'server-hub.openSqliteSql';
+const createTableCommandId = 'server-hub.createSqliteTable';
+const refreshCommandId = 'server-hub.refreshSqliteDatabase';
 
 class SqliteDocument implements vscode.CustomDocument {
 	constructor(readonly uri: vscode.Uri) {}
@@ -15,18 +18,36 @@ class SqliteDocument implements vscode.CustomDocument {
 
 export function registerSqliteEditor(context: vscode.ExtensionContext): vscode.Disposable {
 	const sqlEditor = new SqliteSqlEditorController(context);
+	let activePanel: vscode.WebviewPanel | undefined;
 	const provider: vscode.CustomReadonlyEditorProvider<SqliteDocument> = {
 		openCustomDocument: uri => new SqliteDocument(uri),
-		resolveCustomEditor: (document, panel) => configureSqliteEditor(context, document.uri, panel, sqlEditor),
+		resolveCustomEditor: (document, panel) => {
+			const editorDisposables = [configureSqliteEditor(context, document.uri, panel, sqlEditor)];
+			const updateActivePanel = () => {
+				if (panel.active) activePanel = panel;
+				else if (activePanel === panel) activePanel = undefined;
+			};
+			updateActivePanel();
+			panel.onDidChangeViewState(updateActivePanel, undefined, editorDisposables);
+			panel.onDidDispose(() => {
+				if (activePanel === panel) activePanel = undefined;
+			}, undefined, editorDisposables);
+		},
 	};
 	const editor = vscode.window.registerCustomEditorProvider(sqliteEditorViewType, provider, {
 		supportsMultipleEditorsPerDocument: false,
 		webviewOptions: { retainContextWhenHidden: true },
 	});
-	return vscode.Disposable.from(editor, sqlEditor);
+	return vscode.Disposable.from(
+		editor,
+		sqlEditor,
+		vscode.commands.registerCommand(openSqlCommandId, () => activePanel?.webview.postMessage({ type: 'titleOpenSql' })),
+		vscode.commands.registerCommand(createTableCommandId, () => activePanel?.webview.postMessage({ type: 'titleCreateTable' })),
+		vscode.commands.registerCommand(refreshCommandId, () => activePanel?.webview.postMessage({ type: 'titleRefresh' })),
+	);
 }
 
-function configureSqliteEditor(context: vscode.ExtensionContext, uri: vscode.Uri, panel: vscode.WebviewPanel, sqlEditor: SqliteSqlEditorController): void {
+function configureSqliteEditor(context: vscode.ExtensionContext, uri: vscode.Uri, panel: vscode.WebviewPanel, sqlEditor: SqliteSqlEditorController): vscode.Disposable {
 	if (uri.scheme !== 'file') {
 		throw new Error('SQLite databases can currently only be opened from the local file system.');
 	}
@@ -42,8 +63,8 @@ function configureSqliteEditor(context: vscode.ExtensionContext, uri: vscode.Uri
 	const database = new DatabaseSync(uri.fsPath);
 	let tables = new Set<string>();
 	let pendingStatement: { id: string; sql: string; execute: () => void } | undefined;
-	panel.onDidDispose(() => database.close());
-	panel.webview.onDidReceiveMessage(async (message: SqliteEditorMessage) => {
+	const disposables = [panel.onDidDispose(() => database.close())];
+	disposables.push(panel.webview.onDidReceiveMessage(async (message: SqliteEditorMessage) => {
 		if (message.type === 'ready') {
 			await panel.webview.postMessage({
 				type: 'initialize',
@@ -83,11 +104,25 @@ function configureSqliteEditor(context: vscode.ExtensionContext, uri: vscode.Uri
 		if (message.type === 'confirmTableStatement' && typeof message.confirmationId === 'string') {
 			confirmTableStatement(message.confirmationId);
 		}
-	});
+	}));
 
 	function loadTables(): void {
 		void panel.webview.postMessage({ type: 'tablesLoading', database: databaseName });
 		try {
+			const sizeStatement = database.prepare(`
+				SELECT schema_entry.tbl_name AS table_name,
+					SUM(CASE WHEN schema_entry.type = 'table' THEN dbstat.pgsize ELSE 0 END) AS data_size,
+					SUM(CASE WHEN schema_entry.type = 'index' THEN dbstat.pgsize ELSE 0 END) AS index_size
+				FROM sqlite_schema AS schema_entry
+				JOIN dbstat ON dbstat.name = schema_entry.name
+				WHERE schema_entry.type IN ('table', 'index')
+				GROUP BY schema_entry.tbl_name
+			`);
+			sizeStatement.setReadBigInts(true);
+			const sizes = new Map((sizeStatement.all() as Array<{ table_name: string; data_size: bigint; index_size: bigint }>).map(row => [String(row.table_name), {
+				dataSize: Number(row.data_size),
+				indexSize: Number(row.index_size),
+			}]));
 			const rows = database.prepare(`
 				SELECT name
 				FROM sqlite_schema
@@ -101,12 +136,13 @@ function configureSqliteEditor(context: vscode.ExtensionContext, uri: vscode.Uri
 				tables: rows.map(row => {
 					const name = String(row.name);
 					const count = database.prepare(`SELECT COUNT(*) AS total FROM ${quoteIdentifier(name)}`).get() as { total: number | bigint };
+					const size = sizes.get(name);
 					return {
 					name,
 					engine: 'SQLite',
 					rowCount: Number(count.total),
-					dataSize: 0,
-					indexSize: 0,
+					dataSize: size?.dataSize ?? 0,
+					indexSize: size?.indexSize ?? 0,
 					updatedAt: null,
 					collation: '',
 					};
@@ -221,6 +257,8 @@ function configureSqliteEditor(context: vscode.ExtensionContext, uri: vscode.Uri
 			void panel.webview.postMessage({ type: 'tableCreateError', message: errorMessage(error) });
 		}
 	}
+
+	return vscode.Disposable.from(...disposables);
 }
 
 function parseDefinition(value: unknown, existingTables: Set<string>, originalTable?: string, originalColumns = new Set<string>()): SqliteTableDefinition {

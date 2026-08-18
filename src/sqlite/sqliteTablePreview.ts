@@ -84,7 +84,9 @@ export function openSqliteTablePreview(context: vscode.ExtensionContext, uri: vs
 			const currentPage = Math.min(page, totalPages);
 			const order = sort ? ` ORDER BY ${quoteIdentifier(sort.column)} ${sort.direction === 'asc' ? 'ASC' : 'DESC'}` : '';
 			const rowIdColumn = useRowId ? `rowid AS ${quoteIdentifier('__server_hub_rowid__')}, ` : '';
-			const rows = database.prepare(`SELECT ${rowIdColumn}* FROM ${quoteIdentifier(table)}${filter.sql}${order} LIMIT ? OFFSET ?`).all(...filter.parameters, pageSize, (currentPage - 1) * pageSize) as Array<Record<string, unknown>>;
+			const statement = database.prepare(`SELECT ${rowIdColumn}* FROM ${quoteIdentifier(table)}${filter.sql}${order} LIMIT ? OFFSET ?`);
+			statement.setReadBigInts(true);
+			const rows = statement.all(...filter.parameters, pageSize, (currentPage - 1) * pageSize) as Array<Record<string, unknown>>;
 			pageRows = new Map();
 			const tableRows = rows.map(row => {
 				const rowId = crypto.randomUUID();
