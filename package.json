@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -40,16 +40,6 @@
           }
         ],
         "priority": "option"
-      },
-      {
-        "viewType": "server-hub.sqliteEditor",
-        "displayName": "SQLite Database",
-        "selector": [
-          {
-            "filenamePattern": "*.{db,sqlite,sqlite3}"
-          }
-        ],
-        "priority": "default"
       }
     ],
     "viewsContainers": {
@@ -165,26 +155,6 @@
         "command": "server-hub.exportMysqlSqlResults",
         "title": "Export SQL Results",
         "icon": "$(cloud-download)"
-      },
-      {
-        "command": "server-hub.executeSqliteSql",
-        "title": "Execute SQLite SQL",
-        "icon": "$(play)"
-      },
-      {
-        "command": "server-hub.openSqliteSql",
-        "title": "Open SQL Editor",
-        "icon": "$(gist)"
-      },
-      {
-        "command": "server-hub.createSqliteTable",
-        "title": "Create Table",
-        "icon": "$(add)"
-      },
-      {
-        "command": "server-hub.refreshSqliteDatabase",
-        "title": "Refresh",
-        "icon": "$(refresh)"
       }
     ],
     "keybindings": [
@@ -192,38 +162,13 @@
         "command": "server-hub.executeMysqlSql",
         "key": "f5",
         "when": "editorTextFocus && editorLangId == sql && server-hub.mysqlSqlEditorActive"
-      },
-      {
-        "command": "server-hub.executeSqliteSql",
-        "key": "f5",
-        "when": "editorTextFocus && editorLangId == sql && server-hub.sqliteSqlEditorActive"
       }
     ],
     "menus": {
       "editor/title": [
         {
-          "command": "server-hub.openSqliteSql",
-          "when": "activeWebviewPanelId == server-hub.sqliteEditor",
-          "group": "navigation@1"
-        },
-        {
-          "command": "server-hub.createSqliteTable",
-          "when": "activeWebviewPanelId == server-hub.sqliteEditor",
-          "group": "navigation@2"
-        },
-        {
-          "command": "server-hub.refreshSqliteDatabase",
-          "when": "activeWebviewPanelId == server-hub.sqliteEditor",
-          "group": "navigation@3"
-        },
-        {
           "command": "server-hub.executeMysqlSql",
           "when": "editorLangId == sql && server-hub.mysqlSqlEditorActive",
-          "group": "navigation@1"
-        },
-        {
-          "command": "server-hub.executeSqliteSql",
-          "when": "editorLangId == sql && server-hub.sqliteSqlEditorActive",
           "group": "navigation@1"
         },
         {

@@ -34,7 +34,7 @@ async function exportServerFile(servers: ExportedServer[], fileName: string): Pr
 	}
 
 	const exportFile: ServerExportFile = {
-		version: 6,
+		version: 7,
 		servers,
 	};
 	try {

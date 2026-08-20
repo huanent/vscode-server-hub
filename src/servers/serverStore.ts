@@ -13,6 +13,9 @@ export interface ServerCredentials {
 	password?: string;
 	privateKey?: string;
 	passphrase?: string;
+	proxyPassword?: string;
+	proxyPrivateKey?: string;
+	proxyPassphrase?: string;
 }
 
 export type ServerMoveDirection = 'up' | 'down';
@@ -125,6 +128,9 @@ export class ServerStore {
 				password: credentials.password ?? '',
 				privateKey: credentials.privateKey,
 				passphrase: credentials.passphrase,
+				proxyPassword: credentials.proxyPassword,
+				proxyPrivateKey: credentials.proxyPrivateKey,
+				proxyPassphrase: credentials.proxyPassphrase,
 			};
 		}));
 	}
@@ -133,7 +139,7 @@ export class ServerStore {
 		const importedIds = new Set(importedServers.map(server => server.id));
 		const updatedServers = [
 			...this.getServers().filter(server => !importedIds.has(server.id)),
-			...importedServers.map(({ password: _password, privateKey: _privateKey, passphrase: _passphrase, ...server }) => server),
+			...importedServers.map(({ password: _password, privateKey: _privateKey, passphrase: _passphrase, proxyPassword: _proxyPassword, proxyPrivateKey: _proxyPrivateKey, proxyPassphrase: _proxyPassphrase, ...server }) => server),
 		];
 		importedServers.forEach(server => this.saveCredentials(server, server, true));
 		await this.writeServers(updatedServers);
@@ -209,6 +215,9 @@ export class ServerStore {
 				password: credentials.password ?? '',
 				privateKey: credentials.privateKey ?? '',
 				passphrase: credentials.passphrase ?? '',
+				proxyPassword: credentials.proxyPassword ?? '',
+				proxyPrivateKey: credentials.proxyPrivateKey ?? '',
+				proxyPassphrase: credentials.proxyPassphrase ?? '',
 			}, undefined, 2)));
 			await vscode.workspace.fs.rename(temporaryUri, serverUri, { overwrite: true });
 		}));
@@ -280,12 +289,18 @@ export class ServerStore {
 			this.credentials.set(server.id, {
 				privateKey: credentials.privateKey || (replace ? undefined : current.privateKey),
 				passphrase: credentials.passphrase || (replace || credentials.passphrase !== undefined ? undefined : current.passphrase),
+				proxyPassword: credentials.proxyPassword || (replace ? undefined : current.proxyPassword),
+				proxyPrivateKey: credentials.proxyPrivateKey || (replace ? undefined : current.proxyPrivateKey),
+				proxyPassphrase: credentials.proxyPassphrase || (replace || credentials.proxyPassphrase !== undefined ? undefined : current.proxyPassphrase),
 			});
 			return;
 		}
 
 		this.credentials.set(server.id, {
 			password: credentials.password || (replace ? undefined : current.password),
+			proxyPassword: credentials.proxyPassword || (replace ? undefined : current.proxyPassword),
+			proxyPrivateKey: credentials.proxyPrivateKey || (replace ? undefined : current.proxyPrivateKey),
+			proxyPassphrase: credentials.proxyPassphrase || (replace || credentials.proxyPassphrase !== undefined ? undefined : current.proxyPassphrase),
 		});
 	}
 
@@ -347,7 +362,10 @@ function parseStoredServer(value: unknown): StoredServer | undefined {
 			password: typeof record.password === 'string' ? record.password : undefined,
 			privateKey: typeof record.privateKey === 'string' ? record.privateKey : undefined,
 			passphrase: typeof record.passphrase === 'string' ? record.passphrase : undefined,
+			proxyPassword: typeof record.proxyPassword === 'string' ? record.proxyPassword : undefined,
+			proxyPrivateKey: typeof record.proxyPrivateKey === 'string' ? record.proxyPrivateKey : undefined,
+			proxyPassphrase: typeof record.proxyPassphrase === 'string' ? record.proxyPassphrase : undefined,
 		},
-		hasCredentials: 'password' in record || 'privateKey' in record || 'passphrase' in record,
+		hasCredentials: 'password' in record || 'privateKey' in record || 'passphrase' in record || 'proxyPassword' in record || 'proxyPrivateKey' in record || 'proxyPassphrase' in record,
 	};
 }

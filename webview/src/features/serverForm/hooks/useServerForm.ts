@@ -4,6 +4,8 @@ import type { ServerFormExtensionMessage, ServerFormModel, ServerFormValues } fr
 
 const emptyValues: ServerFormValues = {
 	name: '', group: '', host: '', port: '22', username: '', authType: 'password', proxyCommand: '',
+	proxyEnabled: false, proxyHost: '', proxyPort: '22', proxyUsername: '', proxyAuthType: 'password',
+	proxyPassword: '', proxyPrivateKey: '', proxyPassphrase: '',
 	password: '', privateKey: '', passphrase: '', database: '', runtime: 'docker', executablePath: 'docker',
 	connectionType: 'local', sshServerId: '', commands: [],
 };
@@ -32,6 +34,14 @@ export function useServerForm() {
 						username: server && 'username' in server ? server.username ?? '' : '',
 						authType: server && 'authType' in server ? server.authType ?? 'password' : 'password',
 						proxyCommand: server && 'proxyCommand' in server ? server.proxyCommand ?? '' : '',
+						proxyEnabled: Boolean(server && 'proxy' in server && server.proxy),
+						proxyHost: server && 'proxy' in server ? server.proxy?.host ?? '' : '',
+						proxyPort: String(server && 'proxy' in server ? server.proxy?.port ?? 22 : 22),
+						proxyUsername: server && 'proxy' in server ? server.proxy?.username ?? '' : '',
+						proxyAuthType: server && 'proxy' in server ? server.proxy?.authType ?? 'password' : 'password',
+						proxyPassword: nextModel.credentials.proxyPassword ?? '',
+						proxyPrivateKey: nextModel.credentials.proxyPrivateKey ?? '',
+						proxyPassphrase: nextModel.credentials.proxyPassphrase ?? '',
 						commands: server?.type === 'ssh' ? server.commands : [],
 						password: nextModel.credentials.password ?? '',
 						privateKey: nextModel.credentials.privateKey ?? '',
@@ -49,6 +59,9 @@ export function useServerForm() {
 					break;
 				case 'privateKeySelected':
 					setValues(current => ({ ...current, privateKey: message.contents }));
+					break;
+				case 'proxyPrivateKeySelected':
+					setValues(current => ({ ...current, proxyPrivateKey: message.contents }));
 					break;
 				case 'error':
 					setError(message.message);
@@ -75,5 +88,6 @@ export function useServerForm() {
 		model, values, error, saving, update, save,
 		selectExecutable: () => vscode.postMessage({ type: 'selectExecutable' }),
 		selectPrivateKey: () => vscode.postMessage({ type: 'selectPrivateKey' }),
+		selectProxyPrivateKey: () => vscode.postMessage({ type: 'selectProxyPrivateKey' }),
 	};
 }

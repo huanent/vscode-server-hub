@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Container, Database, FolderOpen, KeyRound, Plus, Save, Server, Trash2 } from '../../components/icons';
 import { IconButton, PrimaryButton } from '../../components/button';
 import { FieldLabel } from '../../components/field';
@@ -9,6 +10,7 @@ import { useServerForm } from './hooks/useServerForm';
 
 export function App() {
 	const form = useServerForm();
+	const [activeTab, setActiveTab] = useState<'connection' | 'proxy' | 'commands'>('connection');
 	if (!form.model) {
 		return <main className="grid min-h-screen place-items-center text-sm text-(--vscode-descriptionForeground)">Loading...</main>;
 	}
@@ -25,6 +27,13 @@ export function App() {
 		: model.serverType === 'container' ? <Container size={22} /> : <Server size={22} />;
 	const manualContainerSsh = model.serverType === 'container' && values.connectionType === 'ssh' && !values.sshServerId;
 	const usesAuthentication = model.serverType === 'ssh' || model.serverType === 'mysql' || manualContainerSsh;
+	const supportsProxy = model.serverType === 'ssh' || manualContainerSsh;
+	const tabs = [
+		{ value: 'connection' as const, label: 'Connection' },
+		...(supportsProxy ? [{ value: 'proxy' as const, label: 'Proxy' }] : []),
+		...(model.serverType === 'ssh' ? [{ value: 'commands' as const, label: 'Commands' }] : []),
+	];
+	const selectedTab = tabs.some(tab => tab.value === activeTab) ? activeTab : 'connection';
 
 	return (
 		<form className="min-h-screen" onSubmit={event => { event.preventDefault(); form.save(); }}>
@@ -45,14 +54,18 @@ export function App() {
 
 			<main className="mx-auto w-[min(640px,calc(100%-44px))] py-8.5 pb-14 max-[680px]:w-[calc(100%-28px)] max-[680px]:pt-7">
 				<PageHeading icon={heading} title={title} description={description} accentClassName={model.serverType === 'mysql' ? 'text-(--vscode-charts-yellow)' : model.serverType === 'container' ? 'text-(--vscode-charts-green)' : 'text-(--vscode-charts-blue)'} />
-				<section className="border-t border-(--vscode-panel-border,var(--vscode-widget-border)) pt-4.5" aria-labelledby="connection-heading">
+				{tabs.length > 1 && <div className="mb-5 flex border-b border-(--vscode-panel-border,var(--vscode-widget-border))" role="tablist" aria-label="Server settings">
+					{tabs.map(tab => <button key={tab.value} type="button" role="tab" aria-selected={selectedTab === tab.value} className={`border-0 border-b-2 bg-transparent px-3 py-2 text-sm ${selectedTab === tab.value ? 'border-(--vscode-focusBorder) text-(--vscode-foreground)' : 'border-transparent text-(--vscode-descriptionForeground) hover:text-(--vscode-foreground)'}`} onClick={() => setActiveTab(tab.value)}>{tab.label}</button>)}
+				</div>}
+				{selectedTab === 'connection' && <section className="border-t border-(--vscode-panel-border,var(--vscode-widget-border)) pt-4.5" aria-labelledby="connection-heading">
 					<h2 className="mt-0 mb-3.5 text-sm font-semibold" id="connection-heading">Connection details</h2>
 					<div className="grid gap-3.5">
 						{model.serverType === 'container' ? <ContainerFields form={form} /> : <NetworkFields form={form} />}
 						{usesAuthentication && <AuthenticationFields form={form} />}
 					</div>
-				</section>
-				{model.serverType === 'ssh' && <CommandFields form={form} />}
+				</section>}
+				{selectedTab === 'proxy' && supportsProxy && <ProxyFields form={form} />}
+				{selectedTab === 'commands' && model.serverType === 'ssh' && <CommandFields form={form} />}
 				{form.error && <div className="mt-4 border-l-[3px] border-(--vscode-errorForeground) bg-(--vscode-inputValidation-errorBackground) px-3 py-2.5 text-(--vscode-errorForeground)" role="alert">{form.error}</div>}
 			</main>
 		</form>
@@ -69,7 +82,6 @@ function NetworkFields({ form }: { form: FormState }) {
 			<Field label="Port" required><TextInput required type="number" min={1} max={65535} value={values.port} onChange={event => form.update('port', event.target.value)} /></Field>
 		</div>
 		<Field label="Username" required><TextInput required autoComplete="username" placeholder="root" value={values.username} onChange={event => form.update('username', event.target.value)} /></Field>
-		{model!.serverType === 'ssh' && <Field label="Proxy command"><TextInput spellCheck={false} placeholder="cloudflared access tcp --hostname example.com" value={values.proxyCommand} onChange={event => form.update('proxyCommand', event.target.value)} /></Field>}
 		{model!.serverType === 'mysql' && <Field label="Database" required><TextInput required placeholder="app" value={values.database} onChange={event => form.update('database', event.target.value)} /></Field>}
 	</>;
 }
@@ -100,9 +112,36 @@ function ContainerFields({ form }: { form: FormState }) {
 				<Field label="Port" required><TextInput required type="number" min={1} max={65535} value={values.port} onChange={event => form.update('port', event.target.value)} /></Field>
 			</div>
 			<Field label="Username" required><TextInput required placeholder="root" value={values.username} onChange={event => form.update('username', event.target.value)} /></Field>
-			<Field label="Proxy command"><TextInput spellCheck={false} placeholder="Optional" value={values.proxyCommand} onChange={event => form.update('proxyCommand', event.target.value)} /></Field>
 		</>}
 	</>;
+}
+
+function ProxyFields({ form }: { form: FormState }) {
+	const { model, values } = form;
+	const credentialRequired = !model!.server || !(model!.server && 'proxy' in model!.server && model!.server.proxy);
+	return <section aria-labelledby="proxy-heading">
+		<h2 className="mt-0 mb-3.5 text-sm font-semibold" id="proxy-heading">Proxy settings</h2>
+		<div className="grid gap-3.5">
+			<label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={values.proxyEnabled} onChange={event => form.update('proxyEnabled', event.target.checked)} />Use SSH jump host</label>
+			{values.proxyEnabled && <>
+				<div className="grid grid-cols-[minmax(0,1fr)_112px] gap-3 max-[440px]:grid-cols-1">
+					<Field label="Proxy host" required><TextInput required placeholder="bastion.example.com" value={values.proxyHost} onChange={event => form.update('proxyHost', event.target.value)} /></Field>
+					<Field label="Port" required><TextInput required type="number" min={1} max={65535} value={values.proxyPort} onChange={event => form.update('proxyPort', event.target.value)} /></Field>
+				</div>
+				<Field label="Username" required><TextInput required autoComplete="username" placeholder="root" value={values.proxyUsername} onChange={event => form.update('proxyUsername', event.target.value)} /></Field>
+				<SegmentedControl label="Proxy authentication method" value={values.proxyAuthType} options={[{ value: 'password', label: 'Password' }, { value: 'privateKey', label: 'Private key' }]} onChange={value => form.update('proxyAuthType', value)} />
+				{values.proxyAuthType === 'password'
+					? <PasswordField label="Proxy password" required={credentialRequired} value={values.proxyPassword} onChange={value => form.update('proxyPassword', value)} />
+					: <>
+						<Field label="Proxy private key" required={credentialRequired}>
+							<span className="flex"><TextArea className="min-w-0 border-r-0" required={credentialRequired} spellCheck={false} placeholder="Paste the PEM or OpenSSH private key" value={values.proxyPrivateKey} onChange={event => form.update('proxyPrivateKey', event.target.value)} /><IconButton className="h-auto self-stretch" type="button" title="Select proxy private key" aria-label="Select proxy private key" onClick={form.selectProxyPrivateKey}><KeyRound size={16} /></IconButton></span>
+						</Field>
+						<PasswordField label="Proxy key passphrase" placeholder="Optional" value={values.proxyPassphrase} onChange={value => form.update('proxyPassphrase', value)} />
+					</>}
+			</>}
+			{!values.proxyEnabled && <Field label="Proxy command"><TextInput spellCheck={false} placeholder="cloudflared access tcp --hostname example.com" value={values.proxyCommand} onChange={event => form.update('proxyCommand', event.target.value)} /></Field>}
+		</div>
+	</section>;
 }
 
 function AuthenticationFields({ form }: { form: FormState }) {
@@ -131,7 +170,7 @@ function CommandFields({ form }: { form: FormState }) {
 		form.update('commands', commands.map((command, commandIndex) => commandIndex === index ? { ...command, [key]: value } : command));
 	};
 	return (
-		<section className="mt-7 border-t border-(--vscode-panel-border,var(--vscode-widget-border)) pt-4.5" aria-labelledby="commands-heading">
+		<section aria-labelledby="commands-heading">
 			<div className="mb-3.5 flex items-center justify-between gap-3">
 				<h2 className="m-0 text-sm font-semibold" id="commands-heading">Commands</h2>
 				<IconButton type="button" title="Add command" aria-label="Add command" onClick={() => form.update('commands', [...commands, { name: '', value: '' }])}><Plus size={16} /></IconButton>

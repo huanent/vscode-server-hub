@@ -18,10 +18,18 @@ export interface ServerCommand {
 	value: string;
 }
 
+export interface SshProxy {
+	host: string;
+	port: number;
+	username: string;
+	authType: 'password' | 'privateKey';
+}
+
 export interface SshServer extends NetworkServer {
 	type: 'ssh';
 	authType: 'password' | 'privateKey';
 	proxyCommand?: string;
+	proxy?: SshProxy;
 	commands: ServerCommand[];
 }
 
@@ -47,6 +55,7 @@ export type ContainerServer = ContainerServerBase & (
 		username: string;
 		authType: 'password' | 'privateKey';
 		proxyCommand?: string;
+		proxy?: SshProxy;
 	}
 );
 
@@ -56,15 +65,18 @@ export type ExportedServer = Server & {
 	password: string;
 	privateKey?: string;
 	passphrase?: string;
+	proxyPassword?: string;
+	proxyPrivateKey?: string;
+	proxyPassphrase?: string;
 };
 
 export interface ServerExportFile {
-	version: 6;
+	version: 7;
 	servers: ExportedServer[];
 }
 
 export interface ServerFormMessage {
-	type: 'save' | 'selectPrivateKey' | 'selectExecutable';
+	type: 'save' | 'selectPrivateKey' | 'selectProxyPrivateKey' | 'selectExecutable';
 	name?: unknown;
 	group?: unknown;
 	host?: unknown;
@@ -72,6 +84,14 @@ export interface ServerFormMessage {
 	username?: unknown;
 	authType?: unknown;
 	proxyCommand?: unknown;
+	proxyEnabled?: unknown;
+	proxyHost?: unknown;
+	proxyPort?: unknown;
+	proxyUsername?: unknown;
+	proxyAuthType?: unknown;
+	proxyPassword?: unknown;
+	proxyPrivateKey?: unknown;
+	proxyPassphrase?: unknown;
 	password?: unknown;
 	privateKey?: unknown;
 	passphrase?: unknown;
@@ -81,6 +101,24 @@ export interface ServerFormMessage {
 	connectionType?: unknown;
 	sshServerId?: unknown;
 	commands?: unknown;
+}
+
+function parseSshProxy(message: ServerFormMessage): SshProxy | undefined {
+	if (message.proxyEnabled !== true) {
+		return undefined;
+	}
+	const host = normalizeString(message.proxyHost);
+	const username = normalizeString(message.proxyUsername);
+	const port = Number(message.proxyPort);
+	if (!host || !username || !Number.isInteger(port) || port < 1 || port > 65_535) {
+		return undefined;
+	}
+	return {
+		host,
+		port,
+		username,
+		authType: message.proxyAuthType === 'privateKey' ? 'privateKey' : 'password',
+	};
 }
 
 export function parseServerForm(
@@ -120,6 +158,10 @@ export function parseServerForm(
 		if (!host || !username || !Number.isInteger(port) || port < 1 || port > 65_535) {
 			return undefined;
 		}
+		const proxy = parseSshProxy(message);
+		if (message.proxyEnabled === true && !proxy) {
+			return undefined;
+		}
 		return {
 			...baseServer,
 			connectionType: 'ssh',
@@ -127,7 +169,8 @@ export function parseServerForm(
 			port,
 			username,
 			authType: message.authType === 'privateKey' ? 'privateKey' : 'password',
-			...(normalizeString(message.proxyCommand) ? { proxyCommand: normalizeString(message.proxyCommand) } : {}),
+			...(!proxy && normalizeString(message.proxyCommand) ? { proxyCommand: normalizeString(message.proxyCommand) } : {}),
+			...(proxy ? { proxy } : {}),
 		};
 	}
 
@@ -154,11 +197,16 @@ export function parseServerForm(
 		return { ...baseServer, type: 'mysql', database };
 	}
 
+	const proxy = parseSshProxy(message);
+	if (message.proxyEnabled === true && !proxy) {
+		return undefined;
+	}
 	return {
 		...baseServer,
 		type: 'ssh',
 		authType: message.authType === 'privateKey' ? 'privateKey' : 'password',
-		...(normalizeString(message.proxyCommand) ? { proxyCommand: normalizeString(message.proxyCommand) } : {}),
+		...(!proxy && normalizeString(message.proxyCommand) ? { proxyCommand: normalizeString(message.proxyCommand) } : {}),
+		...(proxy ? { proxy } : {}),
 		commands: normalizeCommands(message.commands),
 	};
 }
@@ -178,7 +226,7 @@ export function parseStoredServers(value: unknown): Server[] {
 }
 
 export function parseServerExport(value: unknown): ExportedServer[] {
-	if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3 && value.version !== 4 && value.version !== 5 && value.version !== 6) || !Array.isArray(value.servers)) {
+	if (!isRecord(value) || (value.version !== 1 && value.version !== 2 && value.version !== 3 && value.version !== 4 && value.version !== 5 && value.version !== 6 && value.version !== 7) || !Array.isArray(value.servers)) {
 		throw new Error('The file is not a supported ServerHub export.');
 	}
 
@@ -207,6 +255,9 @@ export function parseServerExport(value: unknown): ExportedServer[] {
 			password: entry.password,
 			privateKey: typeof entry.privateKey === 'string' ? entry.privateKey : undefined,
 			passphrase: typeof entry.passphrase === 'string' ? entry.passphrase : undefined,
+			proxyPassword: typeof entry.proxyPassword === 'string' ? entry.proxyPassword : undefined,
+			proxyPrivateKey: typeof entry.proxyPrivateKey === 'string' ? entry.proxyPrivateKey : undefined,
+			proxyPassphrase: typeof entry.proxyPassphrase === 'string' ? entry.proxyPassphrase : undefined,
 		};
 	});
 }
@@ -239,6 +290,11 @@ function parseServer(value: unknown, requireType: boolean): Server {
 		username: value.username,
 		authType: value.authType,
 		proxyCommand: value.proxyCommand,
+		proxyEnabled: isRecord(value.proxy),
+		proxyHost: isRecord(value.proxy) ? value.proxy.host : undefined,
+		proxyPort: isRecord(value.proxy) ? value.proxy.port : undefined,
+		proxyUsername: isRecord(value.proxy) ? value.proxy.username : undefined,
+		proxyAuthType: isRecord(value.proxy) ? value.proxy.authType : undefined,
 		database: value.database,
 		runtime: value.runtime,
 		executablePath: value.executablePath,

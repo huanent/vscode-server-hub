@@ -67,7 +67,7 @@ async function handleMessage(
 		await selectFile(panel, 'Select Container Executable', 'executableSelected');
 		return;
 	}
-	if (message.type === 'selectPrivateKey') {
+	if (message.type === 'selectPrivateKey' || message.type === 'selectProxyPrivateKey') {
 		const selection = await vscode.window.showOpenDialog({
 			canSelectMany: false,
 			canSelectFiles: true,
@@ -80,7 +80,7 @@ async function handleMessage(
 		}
 		try {
 			const contents = await vscode.workspace.fs.readFile(selection[0]);
-			await panel.webview.postMessage({ type: 'privateKeySelected', contents: Buffer.from(contents).toString('utf8') });
+			await panel.webview.postMessage({ type: message.type === 'selectProxyPrivateKey' ? 'proxyPrivateKeySelected' : 'privateKeySelected', contents: Buffer.from(contents).toString('utf8') });
 		} catch (error) {
 			await panel.webview.postMessage({ type: 'error', message: `Could not read the private key: ${error instanceof Error ? error.message : String(error)}` });
 		}
@@ -92,6 +92,9 @@ async function handleMessage(
 		password: normalizePassword(message.password),
 		privateKey: normalizePassword(message.privateKey),
 		passphrase: normalizePassword(message.passphrase),
+		proxyPassword: normalizePassword(message.proxyPassword),
+		proxyPrivateKey: normalizePassword(message.proxyPrivateKey),
+		proxyPassphrase: normalizePassword(message.proxyPassphrase),
 	};
 	const usesOwnCredentials = server?.type === 'ssh'
 		|| server?.type === 'mysql'
@@ -103,7 +106,16 @@ async function handleMessage(
 		&& (!existingUsesOwnCredentials || existingServer === undefined || usesPrivateKey(server) !== usesPrivateKey(existingServer));
 	const requiresCredential = usesOwnCredentials && (!existingServer || credentialsChanged);
 	const hasCredential = server && usesPrivateKey(server) ? Boolean(nextCredentials.privateKey) : Boolean(nextCredentials.password);
-	if (!server || (requiresCredential && !hasCredential)) {
+	const nextProxy = server && 'proxy' in server ? server.proxy : undefined;
+	const proxyCredentialRequired = Boolean(nextProxy)
+		&& (!existingServer
+			|| !('proxy' in existingServer)
+			|| !existingServer.proxy
+			|| existingServer.proxy.authType !== nextProxy?.authType);
+	const hasProxyCredential = nextProxy?.authType === 'privateKey'
+		? Boolean(nextCredentials.proxyPrivateKey)
+		: Boolean(nextCredentials.proxyPassword);
+	if (!server || (requiresCredential && !hasCredential) || (proxyCredentialRequired && !hasProxyCredential)) {
 		await panel.webview.postMessage({ type: 'error', message: 'Please complete all required fields.' });
 		return;
 	}

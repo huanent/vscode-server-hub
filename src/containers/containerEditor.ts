@@ -306,6 +306,7 @@ async function resolveSshConnection(server: ContainerServer, serverStore: Server
 		authType: server.authType,
 		commands: [],
 		...(server.proxyCommand ? { proxyCommand: server.proxyCommand } : {}),
+		...(server.proxy ? { proxy: server.proxy } : {}),
 	};
 	return { sshServer, credentials: await serverStore.getCredentials(server.id) };
 }

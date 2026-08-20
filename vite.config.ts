@@ -15,8 +15,6 @@ export default defineConfig({
 				databaseSqlResults: 'webview/src/features/database/sqlResults/main.tsx',
 				mysqlOverview: 'webview/src/features/database/mysql/overview/main.tsx',
 				mysqlTablePreview: 'webview/src/features/database/mysql/tablePreview/main.tsx',
-				sqliteOverview: 'webview/src/features/database/sqlite/overview/main.tsx',
-				sqliteTablePreview: 'webview/src/features/database/sqlite/tablePreview/main.tsx',
 				serverForm: 'webview/src/features/serverForm/main.tsx',
 				sshTerminal: 'webview/src/features/sshTerminal/main.tsx',
 			},
