@@ -51,6 +51,6 @@ export function useSshTerminal(onOutput: (data: string) => void, onVisibilityCha
 		list: (path: string) => postPath('sftpList', path), toggleFavorite: (path = sftpPath) => postPath('sftpToggleFavorite', path),
 		createDirectory: (path = sftpPath) => postPath('sftpCreateDirectory', path), upload: (path = sftpPath) => postPath('sftpUpload', path), properties: (path = sftpPath) => postPath('sftpProperties', path),
 		download: (entry: SftpEntry) => postPath('sftpDownload', entry.path, { isDirectory: entry.isDirectory }), deleteEntry: (entry: SftpEntry) => postPath('sftpDelete', entry.path, { isDirectory: entry.isDirectory }),
-		copyPath: (path: string) => postPath('sftpCopyPath', path), edit: (path: string) => postPath('sftpEdit', path),
+		copyPath: (path: string) => postPath('sftpCopyPath', path), edit: (path: string) => postPath('sftpEdit', path), rename: (path: string) => postPath('sftpRename', path),
 	};
 }

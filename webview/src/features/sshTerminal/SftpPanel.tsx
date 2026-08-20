@@ -15,6 +15,7 @@ interface SftpActions {
 	createDirectory: (path?: string) => void;
 	upload: (path?: string) => void;
 	properties: (path?: string) => void;
+	rename: (path: string) => void;
 	download: (entry: SftpEntry) => void;
 	deleteEntry: (entry: SftpEntry) => void;
 	copyPath: (path: string) => void;
@@ -95,7 +96,7 @@ export function SftpPanel({ sftp }: { sftp: SftpActions }) {
 			...(menu.entry.isDirectory ? [{ label: 'New Folder', action: () => sftp.createDirectory(menu.entry.path) }, { label: 'Upload Files', action: () => sftp.upload(menu.entry.path) }] : [{ label: 'Edit Text', action: () => sftp.edit(menu.entry.path) }]),
 			{ label: 'Download', action: () => sftp.download(menu.entry) },
 			{ label: 'Copy Path', action: () => sftp.copyPath(menu.entry.path) },
-			{ label: 'Properties', action: () => sftp.properties(menu.entry.path) },
+			{ label: 'Rename', action: () => sftp.rename(menu.entry.path) },
 			{ label: 'Delete', danger: true, action: () => sftp.deleteEntry(menu.entry) },
 		]} />}
 	</aside>;

@@ -311,7 +311,8 @@ function passphraseKey(serverId: string): string {
 }
 
 function getServersDirectoryUri(context: vscode.ExtensionContext): vscode.Uri {
-	const configuredPath = vscode.workspace.getConfiguration('server-hub').get<string>(serverStoragePathSetting, '').trim();
+	const configuration = vscode.workspace.getConfiguration('server-hub');
+	const configuredPath = configuration.inspect<string>(serverStoragePathSetting)?.globalValue?.trim() ?? '';
 	if (!configuredPath) {
 		return vscode.Uri.joinPath(context.globalStorageUri, 'servers');
 	}

@@ -12,7 +12,7 @@ import { ServerCredentials } from '../servers/serverStore';
 import { getWebviewHtml } from '../webview';
 
 interface SshWebviewMessage {
-	type: 'input' | 'resize' | 'ready' | 'sftpList' | 'sftpDelete' | 'sftpDownload' | 'sftpUpload' | 'sftpCopyPath' | 'sftpCreateDirectory' | 'sftpProperties' | 'sftpEdit' | 'sftpToggleFavorite';
+	type: 'input' | 'resize' | 'ready' | 'sftpList' | 'sftpDelete' | 'sftpDownload' | 'sftpUpload' | 'sftpCopyPath' | 'sftpCreateDirectory' | 'sftpProperties' | 'sftpRename' | 'sftpEdit' | 'sftpToggleFavorite';
 	data?: unknown;
 	rows?: unknown;
 	columns?: unknown;
@@ -179,6 +179,10 @@ class SshWebviewSession {
 		}
 		if (message.type === 'sftpProperties' && typeof message.path === 'string') {
 			void this.showSftpProperties(message.path);
+			return;
+		}
+		if (message.type === 'sftpRename' && typeof message.path === 'string') {
+			void this.renameSftpEntry(message.path);
 			return;
 		}
 		if (message.type === 'sftpEdit' && typeof message.path === 'string') {
@@ -644,6 +648,40 @@ class SshWebviewSession {
 			);
 		} catch (error) {
 			void vscode.window.showErrorMessage(`Could not load properties: ${this.errorMessage(error)}`);
+		}
+	}
+
+	private async renameSftpEntry(remotePath: string): Promise<void> {
+		const currentName = path.posix.basename(remotePath);
+		const name = await vscode.window.showInputBox({
+			title: `Rename ${currentName}`,
+			prompt: 'Enter a new name',
+			value: currentName,
+			valueSelection: [0, currentName.length],
+			validateInput: value => {
+				const entryName = value.trim();
+				if (!entryName) {
+					return 'Name is required';
+				}
+				if (entryName === '.' || entryName === '..' || entryName.includes('/') || entryName.includes('\\')) {
+					return 'Name cannot contain path separators';
+				}
+				return undefined;
+			},
+		});
+		const entryName = name?.trim();
+		if (!entryName || entryName === currentName) {
+			return;
+		}
+
+		const remoteDirectory = path.posix.dirname(remotePath);
+		try {
+			const sftp = await this.getSftp();
+			const renamedPath = path.posix.join(remoteDirectory, entryName);
+			await new Promise<void>((resolve, reject) => sftp.rename(remotePath, renamedPath, error => error ? reject(error) : resolve()));
+			await this.loadSftpDirectory(remoteDirectory);
+		} catch (error) {
+			void vscode.window.showErrorMessage(`Could not rename ${currentName}: ${this.errorMessage(error)}`);
 		}
 	}
 
