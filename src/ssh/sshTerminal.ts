@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
+import { createReadStream } from 'fs';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
@@ -537,22 +538,84 @@ class SshWebviewSession {
 		cancellationToken?: vscode.CancellationToken,
 	): Promise<void> {
 		const localSize = expectedSize ?? (await fs.stat(localPath)).size;
-		await this.transferFile(
-			(progressStep, done) => sftp.fastPut(localPath, remotePath, { concurrency: 1, step: progressStep }, done),
-			progress,
-			totalSize,
-			completedSize,
-			cancellationToken,
+		const temporaryRemotePath = path.posix.join(
+			path.posix.dirname(remotePath),
+			`.${path.posix.basename(remotePath)}.server-hub-upload-${randomUUID()}.tmp`,
 		);
-		if (cancellationToken?.isCancellationRequested) {
-			throw new vscode.CancellationError();
+		try {
+			await this.transferFile(
+				(progressStep, done) => sftp.fastPut(localPath, temporaryRemotePath, { concurrency: 8, step: progressStep }, done),
+				progress,
+				totalSize,
+				completedSize,
+				cancellationToken,
+			);
+			if (cancellationToken?.isCancellationRequested) {
+				throw new vscode.CancellationError();
+			}
+			const remoteStats = await new Promise<{ size: number }>((resolve, reject) => {
+				sftp.stat(temporaryRemotePath, (error, stats) => error ? reject(error) : resolve(stats));
+			});
+			if (remoteStats.size !== localSize) {
+				throw new Error(`Upload verification failed for ${path.posix.basename(remotePath)}: expected ${localSize} bytes, received ${remoteStats.size} bytes.`);
+			}
+			const [localHash, remoteHash] = await Promise.all([
+				this.hashLocalFile(localPath),
+				this.hashRemoteFile(sftp, temporaryRemotePath),
+			]);
+			if (localHash !== remoteHash) {
+				throw new Error(`Upload verification failed for ${path.posix.basename(remotePath)}: SHA-256 checksum mismatch.`);
+			}
+			await this.replaceRemoteFile(sftp, temporaryRemotePath, remotePath);
+		} finally {
+			await new Promise<void>(resolve => sftp.unlink(temporaryRemotePath, () => resolve()));
 		}
-		const remoteStats = await new Promise<{ size: number }>((resolve, reject) => {
-			sftp.stat(remotePath, (error, stats) => error ? reject(error) : resolve(stats));
+	}
+
+	private async hashLocalFile(localPath: string): Promise<string> {
+		const hash = createHash('sha256');
+		for await (const chunk of createReadStream(localPath)) {
+			hash.update(chunk);
+		}
+		return hash.digest('hex');
+	}
+
+	private async hashRemoteFile(sftp: SFTPWrapper, remotePath: string): Promise<string> {
+		const hash = createHash('sha256');
+		for await (const chunk of sftp.createReadStream(remotePath)) {
+			hash.update(chunk);
+		}
+		return hash.digest('hex');
+	}
+
+	private async replaceRemoteFile(sftp: SFTPWrapper, temporaryPath: string, remotePath: string): Promise<void> {
+		try {
+			await this.renameRemoteFile(sftp, temporaryPath, remotePath);
+			return;
+		} catch (error) {
+			const targetExists = await new Promise<boolean>(resolve => {
+				sftp.stat(remotePath, statError => resolve(!statError));
+			});
+			if (!targetExists) {
+				throw error;
+			}
+		}
+
+		const backupPath = `${remotePath}.server-hub-backup-${randomUUID()}.tmp`;
+		await this.renameRemoteFile(sftp, remotePath, backupPath);
+		try {
+			await this.renameRemoteFile(sftp, temporaryPath, remotePath);
+		} catch (error) {
+			await this.renameRemoteFile(sftp, backupPath, remotePath).catch(() => undefined);
+			throw error;
+		}
+		await new Promise<void>(resolve => sftp.unlink(backupPath, () => resolve()));
+	}
+
+	private async renameRemoteFile(sftp: SFTPWrapper, sourcePath: string, destinationPath: string): Promise<void> {
+		await new Promise<void>((resolve, reject) => {
+			sftp.rename(sourcePath, destinationPath, error => error ? reject(error) : resolve());
 		});
-		if (remoteStats.size !== localSize) {
-			throw new Error(`Upload verification failed for ${path.posix.basename(remotePath)}: expected ${localSize} bytes, received ${remoteStats.size} bytes.`);
-		}
 	}
 
 	private async createSftpDirectory(remoteDirectory: string): Promise<void> {
