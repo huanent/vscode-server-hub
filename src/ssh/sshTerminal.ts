@@ -421,10 +421,7 @@ class SshWebviewSession {
 		await vscode.window.withProgress({
 			location: vscode.ProgressLocation.Notification,
 			title: `Saving ${path.posix.basename(remotePath)}`,
-		}, progress => this.transferFile(
-			(progressStep, done) => sftp.fastPut(localPath, remotePath, { step: progressStep }, done),
-			progress,
-		));
+		}, progress => this.uploadSftpFile(sftp, localPath, remotePath, progress));
 		if (path.posix.dirname(remotePath) === this.sftpPath) {
 			await this.loadSftpDirectory(this.sftpPath);
 		}
@@ -544,11 +541,14 @@ class SshWebviewSession {
 				for (let index = 0; index < sources.length; index++) {
 					const source = sources[index];
 					const remotePath = path.posix.join(remoteDirectory, path.basename(source.fsPath));
-					await this.transferFile(
-						(progressStep, done) => sftp.fastPut(source.fsPath, remotePath, { step: progressStep }, done),
+					await this.uploadSftpFile(
+						sftp,
+						source.fsPath,
+						remotePath,
 						progress,
 						totalSize,
 						completedSize,
+						sizes[index],
 					);
 					completedSize += sizes[index];
 				}
@@ -557,6 +557,30 @@ class SshWebviewSession {
 			await this.loadSftpDirectory(remoteDirectory);
 		} catch (error) {
 			void vscode.window.showErrorMessage(`Could not upload file: ${this.errorMessage(error)}`);
+		}
+	}
+
+	private async uploadSftpFile(
+		sftp: SFTPWrapper,
+		localPath: string,
+		remotePath: string,
+		progress: vscode.Progress<{ increment?: number; message?: string }>,
+		totalSize?: number,
+		completedSize = 0,
+		expectedSize?: number,
+	): Promise<void> {
+		const localSize = expectedSize ?? (await fs.stat(localPath)).size;
+		await this.transferFile(
+			(progressStep, done) => sftp.fastPut(localPath, remotePath, { concurrency: 1, step: progressStep }, done),
+			progress,
+			totalSize,
+			completedSize,
+		);
+		const remoteStats = await new Promise<{ size: number }>((resolve, reject) => {
+			sftp.stat(remotePath, (error, stats) => error ? reject(error) : resolve(stats));
+		});
+		if (remoteStats.size !== localSize) {
+			throw new Error(`Upload verification failed for ${path.posix.basename(remotePath)}: expected ${localSize} bytes, received ${remoteStats.size} bytes.`);
 		}
 	}
 
