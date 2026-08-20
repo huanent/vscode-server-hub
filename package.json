@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -88,7 +88,7 @@
       },
       {
         "command": "server-hub.copyHost",
-        "title": "Copy Address",
+        "title": "Copy Host",
         "icon": "$(copy)"
       },
       {

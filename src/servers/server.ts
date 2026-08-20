@@ -36,6 +36,7 @@ export interface SshServer extends NetworkServer {
 export interface MysqlServer extends NetworkServer {
 	type: 'mysql';
 	database: string;
+	proxy?: SshProxy;
 }
 
 interface ContainerServerBase extends BaseServer {
@@ -145,32 +146,24 @@ export function parseServerForm(
 			runtime,
 			executablePath,
 		} as const;
-		if (message.connectionType !== 'ssh') {
+		if (message.proxyEnabled !== true) {
 			return { ...baseServer, connectionType: 'local' };
 		}
 		const sshServerId = normalizeString(message.sshServerId);
 		if (sshServerId) {
 			return { ...baseServer, connectionType: 'ssh', sshServerId };
 		}
-		const host = normalizeString(message.host);
-		const username = normalizeString(message.username);
-		const port = Number(message.port);
-		if (!host || !username || !Number.isInteger(port) || port < 1 || port > 65_535) {
-			return undefined;
-		}
 		const proxy = parseSshProxy(message);
-		if (message.proxyEnabled === true && !proxy) {
+		if (!proxy) {
 			return undefined;
 		}
 		return {
 			...baseServer,
 			connectionType: 'ssh',
-			host,
-			port,
-			username,
-			authType: message.authType === 'privateKey' ? 'privateKey' : 'password',
-			...(!proxy && normalizeString(message.proxyCommand) ? { proxyCommand: normalizeString(message.proxyCommand) } : {}),
-			...(proxy ? { proxy } : {}),
+			host: proxy.host,
+			port: proxy.port,
+			username: proxy.username,
+			authType: proxy.authType,
 		};
 	}
 
@@ -194,7 +187,11 @@ export function parseServerForm(
 		if (!database) {
 			return undefined;
 		}
-		return { ...baseServer, type: 'mysql', database };
+		const proxy = parseSshProxy(message);
+		if (message.proxyEnabled === true && !proxy) {
+			return undefined;
+		}
+		return { ...baseServer, type: 'mysql', database, ...(proxy ? { proxy } : {}) };
 	}
 
 	const proxy = parseSshProxy(message);
@@ -280,6 +277,8 @@ function parseServer(value: unknown, requireType: boolean): Server {
 	if (!type || !id) {
 		throw new Error('Invalid server.');
 	}
+	const containerSsh = type === 'container' && value.connectionType === 'ssh';
+	const manualContainerSsh = containerSsh && !normalizeString(value.sshServerId);
 
 	const server = parseServerForm({
 		type: 'save',
@@ -290,11 +289,11 @@ function parseServer(value: unknown, requireType: boolean): Server {
 		username: value.username,
 		authType: value.authType,
 		proxyCommand: value.proxyCommand,
-		proxyEnabled: isRecord(value.proxy),
-		proxyHost: isRecord(value.proxy) ? value.proxy.host : undefined,
-		proxyPort: isRecord(value.proxy) ? value.proxy.port : undefined,
-		proxyUsername: isRecord(value.proxy) ? value.proxy.username : undefined,
-		proxyAuthType: isRecord(value.proxy) ? value.proxy.authType : undefined,
+		proxyEnabled: containerSsh || isRecord(value.proxy),
+		proxyHost: manualContainerSsh ? value.host : isRecord(value.proxy) ? value.proxy.host : undefined,
+		proxyPort: manualContainerSsh ? value.port : isRecord(value.proxy) ? value.proxy.port : undefined,
+		proxyUsername: manualContainerSsh ? value.username : isRecord(value.proxy) ? value.proxy.username : undefined,
+		proxyAuthType: manualContainerSsh ? value.authType : isRecord(value.proxy) ? value.proxy.authType : undefined,
 		database: value.database,
 		runtime: value.runtime,
 		executablePath: value.executablePath,

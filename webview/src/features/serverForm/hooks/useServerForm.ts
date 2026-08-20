@@ -24,6 +24,10 @@ export function useServerForm() {
 					const nextModel = message.model;
 					const server = nextModel.server;
 					const container = server?.type === 'container' ? server : undefined;
+					const manualContainerSsh = container?.connectionType === 'ssh' && !container.sshServerId;
+					const referencedContainerSsh = container?.connectionType === 'ssh' && container.sshServerId
+						? nextModel.sshServers.find(candidate => candidate.id === container.sshServerId)
+						: undefined;
 					setModel(nextModel);
 					setValues({
 						...emptyValues,
@@ -34,14 +38,14 @@ export function useServerForm() {
 						username: server && 'username' in server ? server.username ?? '' : '',
 						authType: server && 'authType' in server ? server.authType ?? 'password' : 'password',
 						proxyCommand: server && 'proxyCommand' in server ? server.proxyCommand ?? '' : '',
-						proxyEnabled: Boolean(server && 'proxy' in server && server.proxy),
-						proxyHost: server && 'proxy' in server ? server.proxy?.host ?? '' : '',
-						proxyPort: String(server && 'proxy' in server ? server.proxy?.port ?? 22 : 22),
-						proxyUsername: server && 'proxy' in server ? server.proxy?.username ?? '' : '',
-						proxyAuthType: server && 'proxy' in server ? server.proxy?.authType ?? 'password' : 'password',
-						proxyPassword: nextModel.credentials.proxyPassword ?? '',
-						proxyPrivateKey: nextModel.credentials.proxyPrivateKey ?? '',
-						proxyPassphrase: nextModel.credentials.proxyPassphrase ?? '',
+						proxyEnabled: container ? container.connectionType === 'ssh' : Boolean(server && 'proxy' in server && server.proxy),
+						proxyHost: manualContainerSsh ? container.host ?? '' : referencedContainerSsh?.host ?? (server && 'proxy' in server ? server.proxy?.host ?? '' : ''),
+						proxyPort: String(manualContainerSsh ? container.port ?? 22 : referencedContainerSsh?.port ?? (server && 'proxy' in server ? server.proxy?.port ?? 22 : 22)),
+						proxyUsername: manualContainerSsh ? container.username ?? '' : referencedContainerSsh?.username ?? (server && 'proxy' in server ? server.proxy?.username ?? '' : ''),
+						proxyAuthType: manualContainerSsh ? container.authType ?? 'password' : referencedContainerSsh?.authType ?? (server && 'proxy' in server ? server.proxy?.authType ?? 'password' : 'password'),
+						proxyPassword: manualContainerSsh ? nextModel.credentials.password ?? '' : nextModel.credentials.proxyPassword ?? '',
+						proxyPrivateKey: manualContainerSsh ? nextModel.credentials.privateKey ?? '' : nextModel.credentials.proxyPrivateKey ?? '',
+						proxyPassphrase: manualContainerSsh ? nextModel.credentials.passphrase ?? '' : nextModel.credentials.proxyPassphrase ?? '',
 						commands: server?.type === 'ssh' ? server.commands : [],
 						password: nextModel.credentials.password ?? '',
 						privateKey: nextModel.credentials.privateKey ?? '',

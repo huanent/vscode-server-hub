@@ -3,12 +3,13 @@ import { homedir } from 'node:os';
 import * as vscode from 'vscode';
 import { Connection, RowDataPacket } from 'mysql2/promise';
 import { MysqlServer } from '../servers/server';
+import { ServerCredentials } from '../servers/serverStore';
 import { createMysqlConnection } from './mysqlConnection';
 import { splitMysqlStatements } from './sqlStatements';
 
 export async function exportMysqlDatabase(
 	server: MysqlServer,
-	password: string,
+	credentials: ServerCredentials,
 	database: string,
 ): Promise<boolean> {
 	const target = await vscode.window.showSaveDialog({
@@ -24,7 +25,7 @@ export async function exportMysqlDatabase(
 		await vscode.window.withProgress({
 			location: vscode.ProgressLocation.Notification,
 			title: `Exporting database ${database}`,
-		}, progress => writeDatabaseDump(server, password, database, target.fsPath, progress));
+		}, progress => writeDatabaseDump(server, credentials, database, target.fsPath, progress));
 	} catch (error) {
 		try {
 			await vscode.workspace.fs.delete(target);
@@ -39,7 +40,7 @@ export async function exportMysqlDatabase(
 
 export async function importMysqlDatabase(
 	server: MysqlServer,
-	password: string,
+	credentials: ServerCredentials,
 	database: string,
 ): Promise<boolean> {
 	const selection = await vscode.window.showOpenDialog({
@@ -56,7 +57,7 @@ export async function importMysqlDatabase(
 	if (statements.length === 0) {
 		throw new Error('The selected file contains no executable SQL statements.');
 	}
-	const connection = await createMysqlConnection(server, password, database);
+	const connection = await createMysqlConnection(server, credentials, database);
 	try {
 		await vscode.window.withProgress({
 			location: vscode.ProgressLocation.Notification,
@@ -80,12 +81,12 @@ export async function importMysqlDatabase(
 
 async function writeDatabaseDump(
 	server: MysqlServer,
-	password: string,
+	credentials: ServerCredentials,
 	database: string,
 	outputPath: string,
 	progress: vscode.Progress<{ message?: string }>,
 ): Promise<void> {
-	const connection = await createMysqlConnection(server, password, database);
+	const connection = await createMysqlConnection(server, credentials, database);
 	const output = createWriteStream(outputPath, { encoding: 'utf8' });
 	const outputError = new Promise<never>((_, reject) => output.once('error', reject));
 	try {

@@ -49,8 +49,8 @@ export function registerServerHubEditor(
 				configureSshTerminal(context, panel, server, credentials);
 				return;
 			}
-			const password = await serverStore.getPassword(server.id);
-			if (!password) {
+			const credentials = await serverStore.getCredentials(server.id);
+			if (!credentials.password) {
 				throw new Error(`No password is available for “${server.name}” on this device.`);
 			}
 			if (descriptor.kind === 'mysqlEditor' && server.type === 'mysql') {
@@ -58,7 +58,7 @@ export function registerServerHubEditor(
 					context.extensionUri,
 					panel,
 					server,
-					password,
+					credentials,
 					(database, table) => void openMysqlTablePreview(server, database, table),
 					(database, initialSql) => openMysqlSqlEditor(server.id, database, initialSql),
 				);
@@ -74,7 +74,7 @@ export function registerServerHubEditor(
 					context.extensionUri,
 					panel,
 					server,
-					password,
+					credentials,
 					descriptor.database,
 					descriptor.table,
 				);

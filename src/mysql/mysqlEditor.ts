@@ -18,6 +18,7 @@ import {
 	parseTableSort,
 } from './tableData';
 import { MysqlServer } from '../servers/server';
+import { ServerCredentials } from '../servers/serverStore';
 import { exportMysqlDatabase, importMysqlDatabase } from './mysqlDatabaseTransfer';
 import { getWebviewHtml } from '../webview';
 
@@ -25,7 +26,7 @@ export function configureMysqlEditor(
 	extensionUri: vscode.Uri,
 	panel: vscode.WebviewPanel,
 	server: MysqlServer,
-	password: string,
+	credentials: ServerCredentials,
 	openTable: (database: string, table: string) => void,
 	openSql: (database: string, initialSql?: string) => void,
 ): void {
@@ -137,7 +138,7 @@ export function configureMysqlEditor(
 			return;
 		}
 		try {
-			connection = await createMysqlConnection(server, password);
+			connection = await createMysqlConnection(server, credentials);
 			if (disposed) {
 				await connection.end();
 				return;
@@ -232,7 +233,7 @@ export function configureMysqlEditor(
 
 	async function exportDatabase(database: string): Promise<void> {
 		try {
-			await exportMysqlDatabase(server, password, database);
+			await exportMysqlDatabase(server, credentials, database);
 		} catch (error) {
 			void vscode.window.showErrorMessage(`Could not export database: ${errorMessage(error)}`);
 		}
@@ -241,7 +242,7 @@ export function configureMysqlEditor(
 	async function importDatabase(): Promise<void> {
 		const database = currentDatabase;
 		try {
-			const completed = await importMysqlDatabase(server, password, database);
+			const completed = await importMysqlDatabase(server, credentials, database);
 			if (completed) {
 				await loadTables();
 			}
@@ -380,7 +381,7 @@ export function configureMysqlTablePreview(
 	extensionUri: vscode.Uri,
 	panel: vscode.WebviewPanel,
 	server: MysqlServer,
-	password: string,
+	credentials: ServerCredentials,
 	database: string,
 	table: string,
 ): void {
@@ -456,7 +457,7 @@ export function configureMysqlTablePreview(
 			return;
 		}
 		try {
-			connection = await createMysqlConnection(server, password, database);
+			connection = await createMysqlConnection(server, credentials, database);
 			if (disposed) {
 				await connection.end();
 				return;

@@ -88,7 +88,7 @@ async function handleMessage(
 	}
 
 	const server = parseServerForm(message, serverType, existingServer?.id);
-	const nextCredentials = {
+	const submittedCredentials = {
 		password: normalizePassword(message.password),
 		privateKey: normalizePassword(message.privateKey),
 		passphrase: normalizePassword(message.passphrase),
@@ -96,6 +96,13 @@ async function handleMessage(
 		proxyPrivateKey: normalizePassword(message.proxyPrivateKey),
 		proxyPassphrase: normalizePassword(message.proxyPassphrase),
 	};
+	const nextCredentials = server?.type === 'container' && server.connectionType === 'ssh' && !server.sshServerId
+		? {
+			password: submittedCredentials.proxyPassword,
+			privateKey: submittedCredentials.proxyPrivateKey,
+			passphrase: submittedCredentials.proxyPassphrase,
+		}
+		: submittedCredentials;
 	const usesOwnCredentials = server?.type === 'ssh'
 		|| server?.type === 'mysql'
 		|| server?.type === 'container' && server.connectionType === 'ssh' && !server.sshServerId;
@@ -106,15 +113,15 @@ async function handleMessage(
 		&& (!existingUsesOwnCredentials || existingServer === undefined || usesPrivateKey(server) !== usesPrivateKey(existingServer));
 	const requiresCredential = usesOwnCredentials && (!existingServer || credentialsChanged);
 	const hasCredential = server && usesPrivateKey(server) ? Boolean(nextCredentials.privateKey) : Boolean(nextCredentials.password);
-	const nextProxy = server && 'proxy' in server ? server.proxy : undefined;
+	const nextProxy = server && server.type !== 'container' && 'proxy' in server ? server.proxy : undefined;
 	const proxyCredentialRequired = Boolean(nextProxy)
 		&& (!existingServer
 			|| !('proxy' in existingServer)
 			|| !existingServer.proxy
 			|| existingServer.proxy.authType !== nextProxy?.authType);
 	const hasProxyCredential = nextProxy?.authType === 'privateKey'
-		? Boolean(nextCredentials.proxyPrivateKey)
-		: Boolean(nextCredentials.proxyPassword);
+		? Boolean(submittedCredentials.proxyPrivateKey)
+		: Boolean(submittedCredentials.proxyPassword);
 	if (!server || (requiresCredential && !hasCredential) || (proxyCredentialRequired && !hasProxyCredential)) {
 		await panel.webview.postMessage({ type: 'error', message: 'Please complete all required fields.' });
 		return;

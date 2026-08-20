@@ -118,8 +118,8 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 			void vscode.window.showErrorMessage('The MySQL server no longer exists.');
 			return;
 		}
-		const password = await this.serverStore.getPassword(server.id);
-		if (!password) {
+		const credentials = await this.serverStore.getCredentials(server.id);
+		if (!credentials.password) {
 			void vscode.window.showErrorMessage(`No password is available for “${server.name}” on this device.`);
 			return;
 		}
@@ -128,7 +128,7 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 			location: vscode.ProgressLocation.Window,
 			title: `Executing SQL on ${server.name} / ${context.database}`,
 		}, async () => {
-			const connection = await createMysqlConnection(server, password, context.database);
+			const connection = await createMysqlConnection(server, credentials, context.database);
 			const startedAt = performance.now();
 			try {
 				const statements = splitMysqlStatements(sql);
@@ -235,12 +235,12 @@ export class MysqlSqlEditorController implements vscode.Disposable {
 		if (!server || server.type !== 'mysql') {
 			return { tables: new Map() };
 		}
-		const password = await this.serverStore.getPassword(server.id);
-		if (!password) {
+		const credentials = await this.serverStore.getCredentials(server.id);
+		if (!credentials.password) {
 			return { tables: new Map() };
 		}
 
-		const connection = await createMysqlConnection(server, password, context.database);
+		const connection = await createMysqlConnection(server, credentials, context.database);
 		try {
 			const [rows] = await connection.query<RowDataPacket[]>(
 				`SELECT TABLE_NAME AS tableName, COLUMN_NAME AS columnName

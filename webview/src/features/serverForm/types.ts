@@ -39,6 +39,7 @@ export interface MysqlServer extends BaseServer {
 	port: number;
 	username: string;
 	database: string;
+	proxy?: SshProxy;
 }
 
 export interface ContainerServer extends BaseServer {

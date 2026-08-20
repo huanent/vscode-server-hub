@@ -1,12 +1,62 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { Duplex } from 'node:stream';
 import { Client, ConnectConfig } from 'ssh2';
-import { SshServer } from '../servers/server';
+import { SshProxy, SshServer } from '../servers/server';
 import { ServerCredentials } from '../servers/serverStore';
 
 export interface SshConnection {
 	client: Client;
 	dispose: () => void;
+}
+
+export interface SshForward {
+	stream: Duplex;
+	dispose: () => void;
+}
+
+export function createSshForward(
+	server: SshProxy,
+	credentials: ServerCredentials,
+	targetHost: string,
+	targetPort: number,
+): Promise<SshForward> {
+	return new Promise((resolve, reject) => {
+		const client = new Client();
+		let settled = false;
+		let disposed = false;
+		const dispose = () => {
+			if (disposed) {
+				return;
+			}
+			disposed = true;
+			client.end();
+		};
+		const fail = (error: Error) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			dispose();
+			reject(error);
+		};
+		client
+			.on('keyboard-interactive', (_name, _instructions, _language, prompts, finish) => {
+				finish(prompts.map(() => credentials.password ?? ''));
+			})
+			.on('ready', () => {
+				client.forwardOut('127.0.0.1', 0, targetHost, targetPort, (error, stream) => {
+					if (error) {
+						fail(error);
+						return;
+					}
+					settled = true;
+					stream.once('close', dispose);
+					resolve({ stream, dispose });
+				});
+			})
+			.on('error', fail)
+			.connect(connectionConfig(server, credentials));
+	});
 }
 
 export function connectSshClient(
