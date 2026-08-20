@@ -4,6 +4,7 @@ import type { ServerFormExtensionMessage, ServerFormModel, ServerFormValues } fr
 
 const emptyValues: ServerFormValues = {
 	name: '', group: '', host: '', port: '22', username: '', authType: 'password', proxyCommand: '',
+	proxyMode: 'none',
 	proxyEnabled: false, proxyHost: '', proxyPort: '22', proxyUsername: '', proxyAuthType: 'password',
 	proxyPassword: '', proxyPrivateKey: '', proxyPassphrase: '',
 	password: '', privateKey: '', passphrase: '', database: '', runtime: 'docker', executablePath: 'docker',
@@ -38,6 +39,9 @@ export function useServerForm() {
 						username: server && 'username' in server ? server.username ?? '' : '',
 						authType: server && 'authType' in server ? server.authType ?? 'password' : 'password',
 						proxyCommand: server && 'proxyCommand' in server ? server.proxyCommand ?? '' : '',
+						proxyMode: container?.connectionType === 'ssh' || Boolean(server && 'proxy' in server && server.proxy)
+							? 'ssh'
+							: server && 'proxyCommand' in server && server.proxyCommand ? 'command' : 'none',
 						proxyEnabled: container ? container.connectionType === 'ssh' : Boolean(server && 'proxy' in server && server.proxy),
 						proxyHost: manualContainerSsh ? container.host ?? '' : referencedContainerSsh?.host ?? (server && 'proxy' in server ? server.proxy?.host ?? '' : ''),
 						proxyPort: String(manualContainerSsh ? container.port ?? 22 : referencedContainerSsh?.port ?? (server && 'proxy' in server ? server.proxy?.port ?? 22 : 22)),

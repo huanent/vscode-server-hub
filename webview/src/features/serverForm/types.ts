@@ -2,6 +2,7 @@ export type ServerType = 'ssh' | 'mysql' | 'container';
 export type AuthType = 'password' | 'privateKey';
 export type ContainerRuntime = 'docker' | 'podman' | 'apple';
 export type ConnectionType = 'local' | 'ssh';
+export type ProxyMode = 'none' | 'ssh' | 'command';
 
 export interface ServerCommand {
 	name: string;
@@ -83,6 +84,7 @@ export interface ServerFormValues {
 	username: string;
 	authType: AuthType;
 	proxyCommand: string;
+	proxyMode: ProxyMode;
 	proxyEnabled: boolean;
 	proxyHost: string;
 	proxyPort: string;

@@ -84,9 +84,9 @@ function ContainerFields({ form }: { form: FormState }) {
 	return <>
 		<SegmentedControl label="Container runtime" value={values.runtime} options={[{ value: 'docker', label: 'Docker' }, { value: 'podman', label: 'Podman' }, { value: 'apple', label: 'Apple' }]} onChange={value => { form.update('runtime', value); form.update('executablePath', runtimeDefaults[value]); }} />
 		<Field label="Executable" required>
-			<span className="flex">
+			<span className="input-action-group flex">
 				<TextInput className="min-w-0 border-r-0" required placeholder="docker" value={values.executablePath} onChange={event => form.update('executablePath', event.target.value)} />
-				<IconButton type="button" title="Select executable" aria-label="Select executable" onClick={form.selectExecutable}><FolderOpen size={16} /></IconButton>
+				<IconButton className="input-action-button" type="button" title="Select executable" aria-label="Select executable" onClick={form.selectExecutable}><FolderOpen size={16} /></IconButton>
 			</span>
 		</Field>
 	</>;
@@ -99,6 +99,13 @@ function ProxyFields({ form }: { form: FormState }) {
 		|| existingServer.type === 'container'
 			? !existingServer || existingServer.connectionType === 'local' || Boolean(existingServer.sshServerId && values.sshServerId !== existingServer.sshServerId)
 			: !('proxy' in existingServer && existingServer.proxy);
+	const updateProxyMode = (mode: 'none' | 'ssh' | 'command') => {
+		form.update('proxyMode', mode);
+		form.update('proxyEnabled', mode === 'ssh');
+		if (mode === 'none') {
+			form.update('proxyCommand', '');
+		}
+	};
 	const updateProxy = <Key extends 'proxyHost' | 'proxyPort' | 'proxyUsername' | 'proxyAuthType' | 'proxyPassword' | 'proxyPrivateKey' | 'proxyPassphrase'>(key: Key, value: FormState['values'][Key]) => {
 		if (model!.serverType === 'container' && values.sshServerId) {
 			form.update('sshServerId', '');
@@ -108,24 +115,24 @@ function ProxyFields({ form }: { form: FormState }) {
 	return <section aria-labelledby="proxy-heading">
 		<h2 className="mt-0 mb-3.5 text-sm font-semibold" id="proxy-heading">Proxy settings</h2>
 		<div className="grid gap-3.5">
-			<label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={values.proxyEnabled} onChange={event => form.update('proxyEnabled', event.target.checked)} />Use SSH jump host</label>
-			{values.proxyEnabled && <>
+			<SegmentedControl label="Proxy type" value={values.proxyMode} options={[{ value: 'none', label: 'None' }, { value: 'ssh', label: 'SSH' }, { value: 'command', label: 'Proxy command' }]} onChange={updateProxyMode} />
+			{values.proxyMode === 'ssh' && <>
 				<div className="grid grid-cols-[minmax(0,1fr)_112px] gap-3 max-[440px]:grid-cols-1">
-					<Field label="Proxy host" required><TextInput required placeholder="bastion.example.com" value={values.proxyHost} onChange={event => updateProxy('proxyHost', event.target.value)} /></Field>
+					<Field label="SSH host" required><TextInput required placeholder="bastion.example.com" value={values.proxyHost} onChange={event => updateProxy('proxyHost', event.target.value)} /></Field>
 					<Field label="Port" required><TextInput required type="number" min={1} max={65535} value={values.proxyPort} onChange={event => updateProxy('proxyPort', event.target.value)} /></Field>
 				</div>
 				<Field label="Username" required><TextInput required autoComplete="username" placeholder="root" value={values.proxyUsername} onChange={event => updateProxy('proxyUsername', event.target.value)} /></Field>
-				<SegmentedControl label="Proxy authentication method" value={values.proxyAuthType} options={[{ value: 'password', label: 'Password' }, { value: 'privateKey', label: 'Private key' }]} onChange={value => updateProxy('proxyAuthType', value)} />
+				<SegmentedControl label="SSH authentication method" value={values.proxyAuthType} options={[{ value: 'password', label: 'Password' }, { value: 'privateKey', label: 'Private key' }]} onChange={value => updateProxy('proxyAuthType', value)} />
 				{values.proxyAuthType === 'password'
-					? <PasswordField label="Proxy password" required={credentialRequired} value={values.proxyPassword} onChange={value => updateProxy('proxyPassword', value)} />
+					? <PasswordField label="SSH password" required={credentialRequired} value={values.proxyPassword} onChange={value => updateProxy('proxyPassword', value)} />
 					: <>
-						<Field label="Proxy private key" required={credentialRequired}>
-							<span className="flex"><TextArea className="min-w-0 border-r-0" required={credentialRequired} spellCheck={false} placeholder="Paste the PEM or OpenSSH private key" value={values.proxyPrivateKey} onChange={event => updateProxy('proxyPrivateKey', event.target.value)} /><IconButton className="h-auto self-stretch" type="button" title="Select proxy private key" aria-label="Select proxy private key" onClick={form.selectProxyPrivateKey}><KeyRound size={16} /></IconButton></span>
+						<Field label="SSH private key" required={credentialRequired}>
+							<span className="input-action-group flex"><TextArea className="min-w-0 border-r-0" required={credentialRequired} spellCheck={false} placeholder="Paste the PEM or OpenSSH private key" value={values.proxyPrivateKey} onChange={event => updateProxy('proxyPrivateKey', event.target.value)} /><IconButton className="input-action-button h-auto self-stretch" type="button" title="Select proxy private key" aria-label="Select proxy private key" onClick={form.selectProxyPrivateKey}><KeyRound size={16} /></IconButton></span>
 						</Field>
-						<PasswordField label="Proxy key passphrase" placeholder="Optional" value={values.proxyPassphrase} onChange={value => updateProxy('proxyPassphrase', value)} />
+						<PasswordField label="SSH key passphrase" placeholder="Optional" value={values.proxyPassphrase} onChange={value => updateProxy('proxyPassphrase', value)} />
 					</>}
 			</>}
-			{!values.proxyEnabled && <Field label="Proxy command"><TextInput spellCheck={false} placeholder="cloudflared access tcp --hostname example.com" value={values.proxyCommand} onChange={event => form.update('proxyCommand', event.target.value)} /></Field>}
+			{values.proxyMode === 'command' && <Field label="Proxy command" required><TextInput required spellCheck={false} placeholder="cloudflared access tcp --hostname example.com" value={values.proxyCommand} onChange={event => form.update('proxyCommand', event.target.value)} /></Field>}
 		</div>
 	</section>;
 }
@@ -140,9 +147,9 @@ function AuthenticationFields({ form }: { form: FormState }) {
 			? <PasswordField label="Password" required={credentialRequired} value={values.password} onChange={value => form.update('password', value)} />
 			: <>
 				<Field label="Private key" required={credentialRequired}>
-					<span className="flex">
+					<span className="input-action-group flex">
 						<TextArea className="min-w-0 border-r-0" required={credentialRequired} spellCheck={false} placeholder="Paste the PEM or OpenSSH private key" value={values.privateKey} onChange={event => form.update('privateKey', event.target.value)} />
-						<IconButton className="h-auto self-stretch" type="button" title="Select private key" aria-label="Select private key" onClick={form.selectPrivateKey}><KeyRound size={16} /></IconButton>
+						<IconButton className="input-action-button h-auto self-stretch" type="button" title="Select private key" aria-label="Select private key" onClick={form.selectPrivateKey}><KeyRound size={16} /></IconButton>
 					</span>
 				</Field>
 				<PasswordField label="Key passphrase" placeholder="Optional" value={values.passphrase} onChange={value => form.update('passphrase', value)} />
