@@ -11,7 +11,7 @@ import { getWebviewHtml } from '../webview';
 import { connectSshClient, SshConnection } from './sshConnection';
 
 interface SshWebviewMessage {
-	type: 'input' | 'resize' | 'ready' | 'sftpList' | 'sftpDelete' | 'sftpDownload' | 'sftpUpload' | 'sftpCopyPath' | 'sftpCreateDirectory' | 'sftpProperties' | 'sftpRename' | 'sftpEdit' | 'sftpToggleFavorite';
+	type: 'input' | 'resize' | 'ready' | 'terminalCopy' | 'terminalPaste' | 'sftpList' | 'sftpDelete' | 'sftpDownload' | 'sftpUpload' | 'sftpCopyPath' | 'sftpCreateDirectory' | 'sftpProperties' | 'sftpRename' | 'sftpEdit' | 'sftpToggleFavorite';
 	data?: unknown;
 	rows?: unknown;
 	columns?: unknown;
@@ -141,6 +141,14 @@ class SshWebviewSession {
 		}
 		if (message.type === 'input' && typeof message.data === 'string') {
 			this.shellStream?.write(message.data);
+			return;
+		}
+		if (message.type === 'terminalCopy' && typeof message.data === 'string') {
+			void vscode.env.clipboard.writeText(message.data);
+			return;
+		}
+		if (message.type === 'terminalPaste') {
+			void vscode.env.clipboard.readText().then(data => this.postMessage({ type: 'terminalPaste', data }));
 			return;
 		}
 		if (message.type === 'sftpList' && typeof message.path === 'string') {

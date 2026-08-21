@@ -4,11 +4,13 @@ import type { ConnectionStatus, RemoteMetricsDisplay, SftpEntry, SshExtensionMes
 
 const emptyMetrics = { cpu: '--', memory: '--', disk: '--', network: '--' };
 
-export function useSshTerminal(onOutput: (data: string) => void, onVisibilityChange: () => void, onFocus: () => void) {
+export function useSshTerminal(onOutput: (data: string) => void, onPaste: (data: string) => void, onVisibilityChange: () => void, onFocus: () => void) {
 	const onOutputRef = useRef(onOutput);
+	const onPasteRef = useRef(onPaste);
 	const onVisibilityChangeRef = useRef(onVisibilityChange);
 	const onFocusRef = useRef(onFocus);
 	onOutputRef.current = onOutput;
+	onPasteRef.current = onPaste;
 	onVisibilityChangeRef.current = onVisibilityChange;
 	onFocusRef.current = onFocus;
 	const [server, setServer] = useState<{ name: string; address: string }>();
@@ -29,6 +31,7 @@ export function useSshTerminal(onOutput: (data: string) => void, onVisibilityCha
 				case 'initialize': setServer(message.server); break;
 				case 'status': setStatus(message.status); setStatusMessage(message.message); break;
 				case 'output': onOutputRef.current(message.data); break;
+				case 'terminalPaste': onPasteRef.current(message.data); break;
 				case 'metrics': setMetrics(message.metrics); break;
 				case 'metricsUnavailable': setMetrics(emptyMetrics); break;
 				case 'focusTerminal': onFocusRef.current(); break;
@@ -47,7 +50,7 @@ export function useSshTerminal(onOutput: (data: string) => void, onVisibilityCha
 	const postPath = (type: string, path: string, extra?: object) => vscode.postMessage({ type, path, ...extra });
 	return {
 		server, status, statusMessage, metrics, sftpVisible, sftpPath, parentPath, entries, favorites, sftpLoading,
-		ready: () => vscode.postMessage({ type: 'ready' }), input: (data: string) => vscode.postMessage({ type: 'input', data }), resize: (rows: number, columns: number) => vscode.postMessage({ type: 'resize', rows, columns }),
+		ready: () => vscode.postMessage({ type: 'ready' }), input: (data: string) => vscode.postMessage({ type: 'input', data }), resize: (rows: number, columns: number) => vscode.postMessage({ type: 'resize', rows, columns }), copy: (data: string) => vscode.postMessage({ type: 'terminalCopy', data }), paste: () => vscode.postMessage({ type: 'terminalPaste' }),
 		list: (path: string) => postPath('sftpList', path), toggleFavorite: (path = sftpPath) => postPath('sftpToggleFavorite', path),
 		createDirectory: (path = sftpPath) => postPath('sftpCreateDirectory', path), upload: (path = sftpPath) => postPath('sftpUpload', path), properties: (path = sftpPath) => postPath('sftpProperties', path),
 		download: (entry: SftpEntry) => postPath('sftpDownload', entry.path, { isDirectory: entry.isDirectory }), deleteEntry: (entry: SftpEntry) => postPath('sftpDelete', entry.path, { isDirectory: entry.isDirectory }),

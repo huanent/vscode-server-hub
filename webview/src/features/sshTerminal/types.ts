@@ -6,6 +6,7 @@ export type SshExtensionMessage =
 	| { type: 'initialize'; server: { name: string; address: string } }
 	| { type: 'status'; status: ConnectionStatus; message: string }
 	| { type: 'output'; data: string }
+	| { type: 'terminalPaste'; data: string }
 	| { type: 'metrics'; metrics: RemoteMetricsDisplay }
 	| { type: 'metricsUnavailable' }
 	| { type: 'focusTerminal' }
