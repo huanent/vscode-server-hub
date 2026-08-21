@@ -2,7 +2,7 @@
   "name": "server-hub",
   "displayName": "ServerHub",
   "description": "Manage and connect to ssh mysql server and more..",
-  "version": "1.7.6",
+  "version": "1.7.7",
   "engines": {
     "vscode": "^1.125.0"
   },

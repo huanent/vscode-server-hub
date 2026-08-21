@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
-import { createHash, randomUUID } from 'crypto';
-import { createReadStream } from 'fs';
+import { randomUUID } from 'crypto';
 import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
@@ -559,33 +558,10 @@ class SshWebviewSession {
 			if (remoteStats.size !== localSize) {
 				throw new Error(`Upload verification failed for ${path.posix.basename(remotePath)}: expected ${localSize} bytes, received ${remoteStats.size} bytes.`);
 			}
-			const [localHash, remoteHash] = await Promise.all([
-				this.hashLocalFile(localPath),
-				this.hashRemoteFile(sftp, temporaryRemotePath),
-			]);
-			if (localHash !== remoteHash) {
-				throw new Error(`Upload verification failed for ${path.posix.basename(remotePath)}: SHA-256 checksum mismatch.`);
-			}
 			await this.replaceRemoteFile(sftp, temporaryRemotePath, remotePath);
 		} finally {
 			await new Promise<void>(resolve => sftp.unlink(temporaryRemotePath, () => resolve()));
 		}
-	}
-
-	private async hashLocalFile(localPath: string): Promise<string> {
-		const hash = createHash('sha256');
-		for await (const chunk of createReadStream(localPath)) {
-			hash.update(chunk);
-		}
-		return hash.digest('hex');
-	}
-
-	private async hashRemoteFile(sftp: SFTPWrapper, remotePath: string): Promise<string> {
-		const hash = createHash('sha256');
-		for await (const chunk of sftp.createReadStream(remotePath)) {
-			hash.update(chunk);
-		}
-		return hash.digest('hex');
 	}
 
 	private async replaceRemoteFile(sftp: SFTPWrapper, temporaryPath: string, remotePath: string): Promise<void> {
